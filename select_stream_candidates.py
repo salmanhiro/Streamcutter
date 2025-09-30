@@ -15,10 +15,11 @@ def main():
     parser = argparse.ArgumentParser(description="StreamCutter GC setup")
     parser.add_argument("--gc", type=str, required=True, help="Globular cluster name (e.g., 'Pal_5')")
     parser.add_argument("--potential", type=str, default="MWPotential2022", help="Potential name (default: MWPotential2022)")
-    parser.add_argument("--n-particles", type=int, default=2000, help="Number of stream particles to simulate (default: 2000)")
+    parser.add_argument("--n-particles", type=int, default=10000, help="Number of stream particles to simulate (default: 2000)")
     parser.add_argument("--pm-frac", type=float, default=0.5, help="Fraction for PM box cut (default: 0.2)")
     parser.add_argument("--sep-max", type=float, default=1.0, help="Max separation in degrees for positional cut (default: 1.0)")
     parser.add_argument("--rv-sigma", type=float, default=20.0, help="Radial velocity sigma in km/s for RV cut (default: 30.0)")
+    parser.add_argument("--n-orbits", type=int, default=3, help="Number of orbits to simulate (default: 3)")
     
     args = parser.parse_args()
 
@@ -28,6 +29,7 @@ def main():
     pm_frac = args.pm_frac
     sep_max = args.sep_max
     rv_sigma = args.rv_sigma
+    n_orbits = args.n_orbits
 
     # Load GC parameters
     gc_param_path = "data/mw_gc_parameters_orbital_structural_time.ecsv"
@@ -77,7 +79,8 @@ def main():
     prog_w0 = [x_gc, y_gc, z_gc, vx_gc, vy_gc, vz_gc]
 
     # Stream generation
-    time_total = (-3 * orbit_t) / 978 if orbit_t < 1000 else -3
+    time_total = (-n_orbits * orbit_t)/978 if orbit_t < 1000 else -3
+    print(f"Simulating stream for {time_total:.2f} Gyr with {n_particles} particles...")
     time_sat, orbit_sat, xv_stream, ic_stream = mock_stream_utils.create_stream(
         mock_stream_utils.create_initial_condition_fardal15,
         np.random.default_rng(0),
@@ -245,6 +248,7 @@ def main():
         f.write(f"Selection notes for {gc_name}\n")
         f.write(f"Potential: {potential_name}\n")
         f.write(f"Number of stream particles simulated: {n_particles}\n")
+        f.write(f"Number of orbits simulated: {n_orbits} with total time {time_total:.2f} Gyr\n")
         f.write(f"Percentage of match with StreamFinder data: {percentage_match:.2f}%\n")
         f.write(f"PM box range cut (fraction): +-{pm_frac}*pm\n")
         f.write(f"Max separation cut (deg): {sep_max}\n")
