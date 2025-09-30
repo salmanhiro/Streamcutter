@@ -1,6 +1,6 @@
 start_fomalhaut.sh
 
-data/mwsall-pix-iron.fits
+data/*.fits
 figures/*
 
 # Byte-compiled / optimized / DLL files

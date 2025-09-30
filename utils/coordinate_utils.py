@@ -9,7 +9,6 @@ def get_observed_coords(
     assume='galactocentric_vxyz',
     R0_kpc=8.5, # Schonrich et al 2010
     Zsun_kpc=0.1,
-    galcen_v_sun=(11.1, 12.24, 7.25)  # km/s   # Schonrich et al 2010
 ):
     """
     Convert Galactocentric phase-space coords -> heliocentric observables.
@@ -57,7 +56,6 @@ def get_observed_coords(
     gc_frame = Galactocentric(
         galcen_distance=R0_kpc * u.kpc,
         z_sun=Zsun_kpc * u.kpc,
-        galcen_v_sun=galcen_v_sun * (u.km/u.s)
     )
 
     # Use explicit Cartesian rep/diff (no transposes; pass named components)
