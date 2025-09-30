@@ -109,7 +109,8 @@ def main():
     print(f"Simulated stream particles: {len(sim_stream_tab)}")
 
     mask_boxcut, idx_sim_box = selection_utils.box_and_cone_cut(sf_data, sim_stream_tab, frac=pm_frac, sep_max=sep_max*u.deg)
-    print(f"PM box+ positional cone: {mask_boxcut.sum()} / {len(mask_boxcut)} = {100*mask_boxcut.mean():.2f}%")
+    percentage_match = mask_boxcut.sum() / len(mask_boxcut) * 100
+    print(f"PM box+ positional cone match with StreamFinder: {mask_boxcut.sum()} / {len(mask_boxcut)} = {percentage_match:.2f}%")
 
     plot_utils.plot_matched_streamfinder_vs_sim(
         sf_data=sf_data,
@@ -244,6 +245,7 @@ def main():
         f.write(f"Selection notes for {gc_name}\n")
         f.write(f"Potential: {potential_name}\n")
         f.write(f"Number of stream particles simulated: {n_particles}\n")
+        f.write(f"Percentage of match with StreamFinder data: {percentage_match:.2f}%\n")
         f.write(f"PM box range cut (fraction): +-{pm_frac}*pm\n")
         f.write(f"Max separation cut (deg): {sep_max}\n")
         f.write(f"RV sigma cut (km/s): {rv_sigma}\n")
