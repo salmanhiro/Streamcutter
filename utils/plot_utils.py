@@ -117,8 +117,19 @@ def plot_gc_stream_and_tidal_radius(gc_name, gc_ra, gc_dec, gc_rt, gc_rsun, stre
     ax.set_xlabel("RA [deg]")
     ax.set_ylabel("Dec [deg]")
     ax.set_title(f"{gc_name} stream track over DESI region")
-    ax.set_xlim(240, 220)
-    ax.set_ylim(-10, 10)
+    
+    pad = 0.5  # degrees
+
+    ra_min = min(stream_data["RAdeg"].min(), gc_ra) - pad
+    ra_max = max(stream_data["RAdeg"].max(), gc_ra) + pad
+
+    dec_min = min(stream_data["DEdeg"].min(), gc_dec) - pad
+    dec_max = max(stream_data["DEdeg"].max(), gc_dec) + pad
+
+    ax.set_xlim(ra_max, ra_min)  # invert x-axis
+    ax.set_ylim(dec_min, dec_max)
+
+
     ax.grid(True, alpha=0.35)
     ax.legend(loc="lower center", ncol=2, fontsize=9)
 

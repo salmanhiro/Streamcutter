@@ -4,11 +4,12 @@ from astropy.table import QTable, Table
 import numpy as np
 import astropy.units as u
 import agama
-from utils import plot_utils, mock_stream_utils, coordinate_utils, selection_utils, feh_correct
+from utils import plot_utils, mock_stream_utils, coordinate_utils, selection_utils, feh_correct, extract_gc_region
 from astropy.table import join
 from astropy.io import fits
 import os 
 import matplotlib.pyplot as plt
+import time
 
 def main():
     parser = argparse.ArgumentParser(description="StreamCutter GC setup")
@@ -194,12 +195,30 @@ def main():
         gc_name=gc_name
     )
 
+    gc_central_feh = extract_gc_region.select_gc_region_feh(
+        gc_df, FM_T_sel, RV_T_sel, radius_deg=None, use_tidal_radius=True, plot=True
+    )
+    print(f"Median [Fe/H] of {gc_name}: mean={np.mean(gc_central_feh):.2f}, std={np.std(gc_central_feh):.2f}, min={np.min(gc_central_feh):.2f}, max={np.max(gc_central_feh):.2f}")
+
+    # Apply kinematic cuts
     mask_boxcut, idx_sim_box = selection_utils.box_pm_cone_rv_cut_DESI(FM_T_sel, RV_T_sel, sim_stream_tab, gc_df, \
                         frac=pm_frac, sep_max=sep_max*u.deg, rv_sigma=rv_sigma*u.km/u.s)
     print(f"PM + RV + positional cone from DESI FM: {mask_boxcut.sum()} / {len(mask_boxcut)} = {100*mask_boxcut.mean():.2f}%")
 
     candidates_filtered_pos_pm_rv = RV_T_sel[mask_boxcut]
     candidates_filtered_pos_pm_fm = FM_T_sel[mask_boxcut]
+
+    # Filter metallicity within 2 sigma of GC central metallicity
+    if len(gc_central_feh) > 0:
+        feh_mean = np.mean(gc_central_feh)
+        feh_std = np.std(gc_central_feh)
+        feh_min = feh_mean - 2 * feh_std
+        feh_max = feh_mean + 2 * feh_std
+        print(f"Applying [Fe/H] cut: {feh_min:.2f} to {feh_max:.2f}")
+        mask_feh = (candidates_filtered_pos_pm_rv['FEH_CORRECTED'] >= feh_min) & (candidates_filtered_pos_pm_rv['FEH_CORRECTED'] <= feh_max)
+        candidates_filtered_pos_pm_rv = candidates_filtered_pos_pm_rv[mask_feh]
+        candidates_filtered_pos_pm_fm = candidates_filtered_pos_pm_fm[mask_feh]
+        print(f"After [Fe/H] cut: {len(candidates_filtered_pos_pm_rv)} candidates remain.")
 
     # Save results
     out_dir = f"results/{gc_name}"
@@ -228,9 +247,12 @@ def main():
         f.write(f"PM box range cut (fraction): +-{pm_frac}*pm\n")
         f.write(f"Max separation cut (deg): {sep_max}\n")
         f.write(f"RV sigma cut (km/s): {rv_sigma}\n")
+        f.write(f"GC region metallicity [Fe/H]: mean={np.mean(gc_central_feh):.2f}, std={np.std(gc_central_feh):.2f}, min={np.min(gc_central_feh):.2f}, max={np.max(gc_central_feh):.2f}\n")
         f.write(f"Total candidates after all cuts: {len(candidates_filtered_pos_pm_rv)}\n")
         f.write(f"Total unique REF_IDs: {len(np.unique(candidates_filtered_pos_pm_rv['REF_ID']))}\n")
     print(f"[v] Saved selection notes to {out_dir}/{gc_name}_selection_notes.txt")
 
 if __name__ == "__main__":
+    start = time.time()
     main()
+    print(f"Time taken: {time.time() - start:.2f} seconds")

@@ -3,6 +3,8 @@ start_fomalhaut.sh
 data/*.fits
 figures/*
 results/*
+submitted_jobs/*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
