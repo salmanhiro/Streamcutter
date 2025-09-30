@@ -176,8 +176,10 @@ def main():
 
     # Save results
     out_dir = "results"
-    candidates_filtered_pos_pm_rv.write(f"{out_dir}/{gc_name}_candidates_filtered_pos_pm_rv.fits")
-    idx_sim_box_filtered_pos_pm_fm.write(f"{out_dir}/{gc_name}_candidates_filtered_pos_pm_fm.fits")
+    os.makedirs(out_dir, exist_ok=True)  # Add this line to ensure the folder exists
+
+    candidates_filtered_pos_pm_rv.write(f"{out_dir}/{gc_name}_candidates_filtered_pos_pm_rv.fits", overwrite=True)
+    idx_sim_box_filtered_pos_pm_fm.write(f"{out_dir}/{gc_name}_candidates_filtered_pos_pm_fm.fits", overwrite=True)
 
     print(f"[v] Saved filtered candidates to {out_dir}/{gc_name}_candidates_filtered_pos_pm_rv.fits")
 
