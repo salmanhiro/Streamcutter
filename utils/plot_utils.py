@@ -5,6 +5,7 @@ from matplotlib.patches import Circle
 from concave_hull import concave_hull_indexes
 import astropy.units as u
 import os
+from scipy.stats import norm
 
 def plot_desi_region(
     tiles_path='data/tiles-main.ecsv',
@@ -123,7 +124,7 @@ def plot_gc_stream_and_tidal_radius(gc_name, gc_ra, gc_dec, gc_rt, gc_rsun, stre
 
     # Save figure if created here
     if created_fig:
-        out_dir = "figures"
+        out_dir = f"results/{gc_name}"
         os.makedirs(out_dir, exist_ok=True)
         out_path = os.path.join(out_dir, f"{gc_name}_stream_desi.png")
         plt.savefig(out_path, dpi=300, bbox_inches="tight")
@@ -195,7 +196,7 @@ def plot_matched_streamfinder_vs_sim(
     ax.grid(True, alpha=0.35)
 
     # Save
-    out_dir = "figures"
+    out_dir = f"results/{gc_name}"
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, f"{gc_name}_matched_stream_positions.png")
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
@@ -210,7 +211,6 @@ def plot_density_with_sim_stream(
     main_sel,
     gc_df,
     gc_name="GC",
-    out_dir="figures",
     bins=(100, 100),
     cmap='plasma',
     cmin=1
@@ -262,10 +262,101 @@ def plot_density_with_sim_stream(
     plt.tight_layout()
 
     # Save plot
+    out_dir = f"results/{gc_name}"
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"{gc_name}_stream_density_overlay.png")
+    out_path = f"results/{gc_name}/{gc_name}_density_with_sim_stream.png"
     plt.savefig(out_path, dpi=300, bbox_inches='tight')
     print(f"[v] Saved density plot to: {out_path}")
 
     plt.close(fig)
     return ax
+
+
+
+def _fit_and_plot_hist(ax, data, bins, color, xlabel, title):
+    data = data[np.isfinite(data)]
+    if len(data) == 0:
+        ax.set_visible(False)
+        return None, None
+
+    mu, sigma = norm.fit(data)
+    n, bins, _ = ax.hist(data, bins=bins, density=True, alpha=0.6, color=color, label='Histogram')
+
+    x = np.linspace(bins[0], bins[-1], 500)
+    p = norm.pdf(x, mu, sigma)
+    ax.plot(x, p, 'k--', linewidth=2, label=f'Gaussian Fit\nμ = {mu:.2f}, σ = {sigma:.2f}')
+    ax.axvline(mu, color='red', linestyle='--', linewidth=1.5)
+    ax.text(mu, max(p)*0.9, f'Peak: {mu:.2f}', color='red', ha='center')
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Probability Density')
+    ax.set_title(title)
+    ax.legend()
+    return mu, sigma
+def plot_candidate_histograms(candidates_fm, candidates_rv, gc_name, out_dir, gc_df=None):
+    import os
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    # === Radial velocity histogram ===
+    print(f"Lowest VRAD_CORRECTED: {np.nanmin(candidates_rv['VRAD_CORRECTED']):.2f}")
+    print(f"Highest VRAD_CORRECTED: {np.nanmax(candidates_rv['VRAD_CORRECTED']):.2f}")
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    _fit_and_plot_hist(
+        ax, candidates_rv['VRAD_CORRECTED'], bins=30, color='blue',
+        xlabel='Corrected Radial Velocity (km/s)',
+        title=f'Radial Velocity Distribution for {gc_name} Candidates'
+    )
+    plt.tight_layout()
+    os.makedirs(out_dir, exist_ok=True)
+    plt.savefig(f"{out_dir}/{gc_name}_candidates_rv_histogram.png", dpi=300)
+    plt.close()
+
+    # === Proper motion histograms ===
+    fig, ax = plt.subplots(1, 2, figsize=(14, 6))
+    _fit_and_plot_hist(
+        ax[0], candidates_fm['PMRA'], bins=30, color='green',
+        xlabel='PMRA (mas/yr)',
+        title=f'PMRA Distribution for {gc_name} Candidates'
+    )
+    _fit_and_plot_hist(
+        ax[1], candidates_fm['PMDEC'], bins=30, color='orange',
+        xlabel='PMDEC (mas/yr)',
+        title=f'PMDEC Distribution for {gc_name} Candidates'
+    )
+    plt.tight_layout()
+    plt.savefig(f"{out_dir}/{gc_name}_candidates_pm_histogram.png", dpi=300)
+    plt.close()
+
+    # === Sky distribution plot ===
+    fig, ax = plt.subplots(figsize=(10, 8))
+    ax.scatter(candidates_fm['TARGET_RA'], candidates_fm['TARGET_DEC'],
+               s=5, color='red', label='Selected Candidates')
+
+    # Optional GC position overlay
+    if gc_df is not None:
+        gc_ra = gc_df['RA'][0]
+        gc_dec = gc_df['DEC'][0]
+        ax.scatter(gc_ra, gc_dec, s=80, color='black', marker='*', label='GC Center (from catalog)', zorder=5)
+
+    ax.set_xlabel('RA (deg)')
+    ax.set_ylabel('DEC (deg)')
+    ax.set_title(f'Sky Distribution of {gc_name} Candidates')
+    ax.invert_xaxis()
+    ax.grid(alpha=0.3)
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(f"{out_dir}/{gc_name}_candidates_sky_distribution.png", dpi=300)
+    plt.close()
+
+    # === Metallicity histogram ===
+    fig, ax = plt.subplots(figsize=(8, 6))
+    _fit_and_plot_hist(
+        ax, candidates_rv['FEH_CORRECTED'], bins=30, color='purple',
+        xlabel='Corrected [Fe/H]',
+        title=f'Metallicity Distribution for {gc_name} Candidates'
+    )
+    plt.tight_layout()
+    plt.savefig(f"{out_dir}/{gc_name}_candidates_feh_histogram.png", dpi=300)
+    plt.close()

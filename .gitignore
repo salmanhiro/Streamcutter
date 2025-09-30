@@ -2,7 +2,7 @@ start_fomalhaut.sh
 
 data/*.fits
 figures/*
-
+results/*
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
