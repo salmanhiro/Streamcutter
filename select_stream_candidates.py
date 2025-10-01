@@ -16,9 +16,10 @@ def main():
     parser.add_argument("--gc", type=str, required=True, help="Globular cluster name (e.g., 'Pal_5')")
     parser.add_argument("--potential", type=str, default="MWPotential2022", help="Potential name (default: MWPotential2022)")
     parser.add_argument("--n-particles", type=int, default=10000, help="Number of stream particles to simulate (default: 2000)")
-    parser.add_argument("--pm-frac", type=float, default=0.5, help="Fraction for PM box cut (default: 0.2)")
+    parser.add_argument("--pm-sigma", type=float, default=2.0, help="Fraction for PM box cut (default: 0.2)")
     parser.add_argument("--sep-max", type=float, default=1.0, help="Max separation in degrees for positional cut (default: 1.0)")
     parser.add_argument("--rv-sigma", type=float, default=20.0, help="Radial velocity sigma in km/s for RV cut (default: 30.0)")
+    parser.add_argument("--feh-sigma", type=float, default=0.3, help="[Fe/H] sigma for metallicity cut (default: 0.3)")
     parser.add_argument("--n-orbits", type=int, default=3, help="Number of orbits to simulate (default: 3)")
     
     args = parser.parse_args()
@@ -26,7 +27,7 @@ def main():
     gc_name = args.gc
     potential_name = args.potential
     n_particles = args.n_particles
-    pm_frac = args.pm_frac
+    pm_sigma = args.pm_sigma
     sep_max = args.sep_max
     rv_sigma = args.rv_sigma
     n_orbits = args.n_orbits
@@ -111,7 +112,7 @@ def main():
 
     print(f"Simulated stream particles: {len(sim_stream_tab)}")
 
-    mask_boxcut, idx_sim_box = selection_utils.box_and_cone_cut(sf_data, sim_stream_tab, frac=pm_frac, sep_max=sep_max*u.deg)
+    mask_boxcut, idx_sim_box = selection_utils.box_and_cone_cut(sf_data, sim_stream_tab, pm_sigma=pm_sigma* u.mas/u.yr, sep_max=sep_max*u.deg)
     percentage_match = mask_boxcut.sum() / len(mask_boxcut) * 100
     print(f"PM box+ positional cone match with StreamFinder: {mask_boxcut.sum()} / {len(mask_boxcut)} = {percentage_match:.2f}%")
 
@@ -206,24 +207,22 @@ def main():
 
     # Apply kinematic cuts
     mask_boxcut, idx_sim_box = selection_utils.box_pm_cone_rv_cut_DESI(FM_T_sel, RV_T_sel, sim_stream_tab, gc_df, \
-                        frac=pm_frac, sep_max=sep_max*u.deg, rv_sigma=rv_sigma*u.km/u.s)
+                        pm_sigma=pm_sigma*u.mas/u.yr, sep_max=sep_max*u.deg, rv_sigma=rv_sigma*u.km/u.s)
     print(f"PM + RV + positional cone from DESI FM: {mask_boxcut.sum()} / {len(mask_boxcut)} = {100*mask_boxcut.mean():.2f}%")
 
     candidates_filtered_pos_pm_rv = RV_T_sel[mask_boxcut]
     candidates_filtered_pos_pm_fm = FM_T_sel[mask_boxcut]
 
-    # Filter metallicity within 2 sigma of GC central metallicity
-    if len(gc_central_feh) > 0:
-        feh_mean = np.mean(gc_central_feh)
-        feh_std = np.std(gc_central_feh)
-        feh_min = feh_mean - 2 * feh_std
-        feh_max = feh_mean + 2 * feh_std
-        print(f"Applying [Fe/H] cut: {feh_min:.2f} to {feh_max:.2f}")
-        mask_feh = (candidates_filtered_pos_pm_rv['FEH_CORRECTED'] >= feh_min) & (candidates_filtered_pos_pm_rv['FEH_CORRECTED'] <= feh_max)
-        candidates_filtered_pos_pm_rv = candidates_filtered_pos_pm_rv[mask_feh]
-        candidates_filtered_pos_pm_fm = candidates_filtered_pos_pm_fm[mask_feh]
-        print(f"After [Fe/H] cut: {len(candidates_filtered_pos_pm_rv)} candidates remain.")
-
+    # Filter metallicity within given sigma of GC central [Fe/H]
+    feh_mean = np.mean(gc_central_feh)
+    feh_std = np.std(gc_central_feh)
+    feh_min = feh_mean - args.feh_sigma * feh_std
+    feh_max = feh_mean + args.feh_sigma * feh_std
+    mask_feh = (candidates_filtered_pos_pm_rv['FEH_CORRECTED'] >= feh_min) & (candidates_filtered_pos_pm_rv['FEH_CORRECTED'] <= feh_max)
+    candidates_filtered_pos_pm_rv = candidates_filtered_pos_pm_rv[mask_feh]
+    candidates_filtered_pos_pm_fm = candidates_filtered_pos_pm_fm[mask_feh]
+    print(f"After [Fe/H] cut ({feh_min:.2f} to {feh_max:.2f}): {len(candidates_filtered_pos_pm_rv)} candidates remain.")
+    
     # Save results
     out_dir = f"results/{gc_name}"
     os.makedirs(out_dir, exist_ok=True)  # Add this line to ensure the folder exists
@@ -250,7 +249,7 @@ def main():
         f.write(f"Number of stream particles simulated: {n_particles}\n")
         f.write(f"Number of orbits simulated: {n_orbits} with total time {time_total:.2f} Gyr\n")
         f.write(f"Percentage of match with StreamFinder data: {percentage_match:.2f}%\n")
-        f.write(f"PM box range cut (fraction): +-{pm_frac}*pm\n")
+        f.write(f"PM sigma cut (mas/yr): {pm_sigma}\n")
         f.write(f"Max separation cut (deg): {sep_max}\n")
         f.write(f"RV sigma cut (km/s): {rv_sigma}\n")
         f.write(f"GC region metallicity [Fe/H]: mean={np.mean(gc_central_feh):.2f}, std={np.std(gc_central_feh):.2f}, min={np.min(gc_central_feh):.2f}, max={np.max(gc_central_feh):.2f}\n")

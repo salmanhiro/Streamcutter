@@ -74,7 +74,23 @@ def select_gc_region_feh(gc_df, FM_T_sel, RV_T_sel, radius_deg=None, use_tidal_r
         plt.grid(True, alpha=0.3)
         plt.legend()
         plt.tight_layout()
-        plt.savefig(f"results/{gc_name}/{gc_name}_feh_distribution.png")
+        plt.savefig(f"results/{gc_name}/{gc_name}_gc_body_feh_distribution.png")
+
+        # Plot 2d histogram of RA/DEC around GC
+        plt.figure(figsize=(6, 6))
+        plt.hist2d(FM_T_sel['TARGET_RA'][mask_within], FM_T_sel['TARGET_DEC'][mask_within],
+                   bins=50, range=[[gc_ra.value - radius_deg, gc_ra.value + radius_deg],
+                                   [gc_dec.value - radius_deg, gc_dec.value + radius_deg]],
+                   cmap='Blues')
+        plt.colorbar(label='Star count')
+        plt.scatter(gc_ra, gc_dec, color='red', marker='*', s=200, label=gc_name)
+        plt.title(f"Stars around {gc_name} within {sep_max:.3f}")
+        plt.xlabel("RA (deg)")
+        plt.ylabel("DEC (deg)")
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(f"results/{gc_name}/{gc_name}_spatial_distribution.png")
 
     # also plot region
 

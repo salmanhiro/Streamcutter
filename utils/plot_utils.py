@@ -309,7 +309,7 @@ def plot_candidate_histograms(candidates_fm, candidates_rv, gc_name, out_dir, gc
     import matplotlib.pyplot as plt
     import numpy as np
 
-    # === Radial velocity histogram ===
+    #  Radial velocity histogram 
     print(f"Lowest VRAD_CORRECTED: {np.nanmin(candidates_rv['VRAD_CORRECTED']):.2f}")
     print(f"Highest VRAD_CORRECTED: {np.nanmax(candidates_rv['VRAD_CORRECTED']):.2f}")
 
@@ -324,7 +324,7 @@ def plot_candidate_histograms(candidates_fm, candidates_rv, gc_name, out_dir, gc
     plt.savefig(f"{out_dir}/{gc_name}_candidates_rv_histogram.png", dpi=300)
     plt.close()
 
-    # === Proper motion histograms ===
+    #  Proper motion histograms 
     fig, ax = plt.subplots(1, 2, figsize=(14, 6))
     _fit_and_plot_hist(
         ax[0], candidates_fm['PMRA'], bins=30, color='green',
@@ -340,7 +340,7 @@ def plot_candidate_histograms(candidates_fm, candidates_rv, gc_name, out_dir, gc
     plt.savefig(f"{out_dir}/{gc_name}_candidates_pm_histogram.png", dpi=300)
     plt.close()
 
-    # === Sky distribution plot ===
+    #  Sky distribution plot 
     fig, ax = plt.subplots(figsize=(10, 8))
     ax.scatter(candidates_fm['TARGET_RA'], candidates_fm['TARGET_DEC'],
                s=5, color='red', label='Selected Candidates')
@@ -361,7 +361,7 @@ def plot_candidate_histograms(candidates_fm, candidates_rv, gc_name, out_dir, gc
     plt.savefig(f"{out_dir}/{gc_name}_candidates_sky_distribution.png", dpi=300)
     plt.close()
 
-    # === Metallicity histogram ===
+    #  Metallicity histogram 
     fig, ax = plt.subplots(figsize=(8, 6))
     _fit_and_plot_hist(
         ax, candidates_rv['FEH_CORRECTED'], bins=30, color='purple',
