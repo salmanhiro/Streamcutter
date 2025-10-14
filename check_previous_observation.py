@@ -4,8 +4,9 @@ from astropy.table import QTable, Table
 import numpy as np
 import astropy.units as u
 import agama
-from utils import plot_utils, mock_stream_utils, coordinate_utils, selection_utils
+from utils import plot_utils, mock_stream_utils, coordinate_utils, selection_utils, feh_correct, extract_gc_region
 import os 
+import matplotlib.pyplot as plt
 import time
 
 def main():
@@ -24,7 +25,6 @@ def main():
     n_particles = args.n_particles
     sep_max = args.sep_max
     n_orbits = args.n_orbits
-    pm_sigma = args.pm_sigma
 
     # Load GC parameters
     gc_param_path = "data/mw_gc_parameters_orbital_structural_time.ecsv"
@@ -33,6 +33,19 @@ def main():
     if len(gc_df) == 0:
         raise ValueError(f"Cluster '{gc_name}' not found in GC parameter file: {gc_param_path}")
 
+    # Load StreamFinder mapping
+    sf_map_df = pd.read_csv("data/streamfinder_baumgardt_map.csv")
+    sf_name_dict = {
+        row["Cluster"]: row["streamfinder_name"]
+        for _, row in sf_map_df.iterrows()
+        if str(row["in_streamfinder"]).strip().upper() == "TRUE"
+    }
+    sf_name = sf_name_dict.get(gc_name, gc_name)
+
+    print(f"GC: {gc_name}")
+    print(f"StreamFinder name: {sf_name}")
+    print(f"Potential: {potential_name}")
+
     # Agama units
     agama.setUnits(length=1, velocity=1, mass=1)
     timeUnitGyr = agama.getUnits()['time']
@@ -40,11 +53,34 @@ def main():
     # Extract GC info
     row = gc_df[0]
     ra_q, dec_q, dist_q = row["RA"].value, row["DEC"].value, row["Rsun"].value
+    rt_q = row["rt"].value
     pmra, pmdec = row["mualpha"].value, row["mu_delta"].value
     mass_sat, rv = row["Mass"].value, row["<RV>"].value
     rhm = row["rh,m"].value
 
     orbit_t = row["orbit_period_max"].value
+
+    # Streamfinder data
+    sf_data = Table.read("data/cleaned_streamfinder_ibata24.csv")
+    sf_data = sf_data[sf_data["Name"] == sf_name]
+    # check if parallax is 0 then remove those rows
+    sf_data = sf_data[sf_data["plx"] > 0]
+    sf_data["Rsun"] = (1 / sf_data["plx"]) # mas to kpc
+    # check rv is not 0
+    sf_data = sf_data[sf_data["VHel"] != 0]
+
+
+    sf_w0 = coordinate_utils.get_galactocentric_coords(
+        sf_data["RAdeg"], sf_data["DEdeg"], sf_data["Rsun"], sf_data["VHel"], sf_data["pmRA"], sf_data["pmDE"]
+    )
+    sf_data["X_gc"] = sf_w0[:, 0]
+    sf_data["Y_gc"] = sf_w0[:, 1]
+    sf_data["Z_gc"] = sf_w0[:, 2]
+    sf_data["Vx_gc"] = sf_w0[:, 3]
+    sf_data["Vy_gc"] = sf_w0[:, 4]
+    sf_data["Vz_gc"] = sf_w0[:, 5]
+
+    plot_utils.plot_gc_stream_and_tidal_radius(gc_name, ra_q, dec_q, rt_q * u.pc, dist_q * u.kpc, stream_data=sf_data)
 
     # Setup potential & progenitor
     pot_host = agama.GalaPotential(f"potentials/{potential_name}.ini")
@@ -80,47 +116,33 @@ def main():
     })
 
     print(f"Simulated stream particles: {len(sim_stream_tab)}")
+    mask_boxcut, idx_sim_box = selection_utils.cone_cut(sf_data, sim_stream_tab, sep_max=sep_max*u.deg)
+    percentage_match = mask_boxcut.sum() / len(mask_boxcut) * 100
+    print(f"Positional cone match with StreamFinder: {mask_boxcut.sum()} / {len(mask_boxcut)} = {percentage_match:.2f}%")
 
-    RV_T = Table().read('data/mwsall-pix-iron-rv-corrected.fits',
-                            'RVTAB',
-                            mask_invalid=False)
+    plot_utils.plot_matched_streamfinder_vs_sim(
+        sf_data=sf_data,
+        sim_stream_tab=sim_stream_tab,
+        idx_sim_box=idx_sim_box,
+        mask_boxcut=mask_boxcut,
+        gc_ra=ra_q,
+        gc_dec=dec_q,
+        gc_rt=rt_q * u.pc,
+        gc_rsun=dist_q * u.kpc,
+        gc_name=gc_name
+    )
 
-    FM_T = Table().read('data/mwsall-pix-iron-rv-corrected.fits',
-                            'FIBERMAP',
-                            mask_invalid=False)
+    plot_utils.plot_overlay_streamfinder_vs_sim(
+        sf_data=sf_data,
+        sim_stream_tab=sim_stream_tab,
+        idx_sim_box=idx_sim_box,
+        gc_ra=ra_q,
+        gc_dec=dec_q,
+        gc_rt=rt_q * u.pc,
+        gc_rsun=dist_q * u.kpc,
+        gc_name=gc_name
+    )
 
-    main_sel = RV_T['PRIMARY'] & (RV_T['RVS_WARN'] == 0) & (RV_T['RR_SPECTYPE'] == 'STAR')
-    RV_T_sel = RV_T[main_sel]
-    FM_T_sel = FM_T[main_sel]
-
-    # Apply positional cuts
-    mask_boxcut, idx_sim_box = selection_utils.cone_cut_DESI(FM_T_sel, RV_T_sel, sim_stream_tab, sep_max=sep_max*u.deg)
-    print(f"Positional cone cut from DESI FM numbers: {mask_boxcut.sum()}")
-
-    RV_T_pos_sel = RV_T_sel[mask_boxcut]
-    FM_T_pos_sel = FM_T_sel[mask_boxcut]
-
-    # Check GC region from DESI
-    ra_deg = row['RA']
-    dec_deg = row['DEC']
-    rsun_pc = row['Rsun'].to(u.pc)
-    rt_pc = row['rt'] 
-
-    gc_region_mask = selection_utils.mask_gc_region_DESI(FM_T_pos_sel, ra_deg, dec_deg, rsun_pc, rt_pc)
-    print(f"Number of stars in GC region from DESI FM numbers: {gc_region_mask.sum()}")
-
-    outside_gc_mask_pos = ~gc_region_mask
-
-    RV_T_final = RV_T_pos_sel[outside_gc_mask_pos]
-    FM_T_final = FM_T_pos_sel[outside_gc_mask_pos]
-
-    # Save fits files
-    output_dir = f"stream_candidates/{gc_name}"
-    os.makedirs(output_dir, exist_ok=True)
-    RV_T_final.write(f"{output_dir}/RVT_stream_candidates_{gc_name}.fits", overwrite=True)
-    FM_T_final.write(f"{output_dir}/FIBERMAP_stream_candidates_{gc_name}.fits", overwrite=True)
-
-    print(f"FM_T columns: {FM_T_final.colnames}")
 if __name__ == "__main__":
     start = time.time()
     main()

@@ -6,6 +6,7 @@ from concave_hull import concave_hull_indexes
 import astropy.units as u
 import os
 from scipy.stats import norm
+from matplotlib.colors import Normalize
 
 def plot_desi_region(
     tiles_path='data/tiles-main.ecsv',
@@ -199,7 +200,6 @@ def plot_matched_streamfinder_vs_sim(
     ax.set_ylabel("Dec [deg]")
     ax.set_title("Matched STREAMFINDER vs Simulation Positions")
     ax.legend(loc="best", fontsize=9)
-
     padding = 1.0
     ax.set_xlim(ra_sim.max().value + padding, ra_sim.min().value - padding)
     ax.set_ylim(dec_sim.min().value - padding, dec_sim.max().value + padding)
@@ -214,6 +214,73 @@ def plot_matched_streamfinder_vs_sim(
     print(f"[v] Saved matched position plot to: {out_path}")
 
     plt.close(fig)
+    return ax
+
+
+def plot_overlay_streamfinder_vs_sim(
+    sf_data,
+    sim_stream_tab,
+    idx_sim_box,
+    gc_ra,
+    gc_dec,
+    gc_rt,
+    gc_rsun,
+    gc_name="GC"
+):
+    fig, ax = plt.subplots(figsize=(10, 10))
+    plot_desi_region(ax=ax, length_threshold=5, color="black")
+    rt_ang = (np.arctan((gc_rt.to(u.kpc) / gc_rsun).value) * u.rad)
+    radius_deg = rt_ang.to(u.deg).value
+
+    # Observed and simulated matched coordinates
+    ra_obs = sf_data["RAdeg"].astype(float) * u.deg
+    dec_obs = sf_data["DEdeg"].astype(float) * u.deg
+
+    ra_sim = sim_stream_tab["RA"].astype(float)
+    dec_sim = sim_stream_tab["DEC"].astype(float)
+
+    # Plot STREAMFINDER matched
+    ax.scatter(
+        ra_obs, dec_obs,
+        s=22, facecolors='none', edgecolors='tab:orange', linewidths=1.2,
+        label=f"STREAMFINDER matched (n={len(idx_sim_box)})", zorder=3
+    )
+
+    # Plot Simulation matched
+    ax.scatter(
+        ra_sim, dec_sim,
+        s=22, facecolors='none', edgecolors='tab:blue', linewidths=1.2,
+        label=f"Simulation matched (n={len(idx_sim_box)})", zorder=3
+    )
+
+    # Tidal radius circle
+    gc_circle = Circle(
+        (gc_ra, gc_dec), radius_deg,
+        edgecolor="crimson", facecolor="none",
+        lw=1.8, zorder=6, label="GC tidal radius (r_t)"
+    )
+    ax.add_patch(gc_circle)
+
+    # Labels and limits
+    ax.set_xlabel("RA [deg]")
+    ax.set_ylabel("Dec [deg]")
+    ax.set_title("Matched STREAMFINDER vs Simulation Positions")
+    ax.legend(loc="best", fontsize=9)
+    padding = 1.0
+    ax.set_xlim(ra_sim.max().value + padding, ra_sim.min().value - padding)
+    ax.set_ylim(dec_sim.min().value - padding, dec_sim.max().value + padding)
+
+    ax.grid(True, alpha=0.35)
+
+    # Save
+    out_dir = f"results/{gc_name}"
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, f"{gc_name}_sim_sf.png")
+    plt.savefig(out_path, dpi=300, bbox_inches="tight")
+    print(f"[v] Saved matched position plot to: {out_path}")
+
+    plt.close(fig)
+
     return ax
 
 def plot_density_with_sim_stream(
@@ -371,3 +438,137 @@ def plot_candidate_histograms(candidates_fm, candidates_rv, gc_name, out_dir, gc
     plt.tight_layout()
     plt.savefig(f"{out_dir}/{gc_name}_candidates_feh_histogram.png", dpi=300)
     plt.close()
+
+
+def plot_subplots_sf_vs_sim_Rsun(
+    sf_data,            # columns: RAdeg, DEdeg, Rsun
+    sim_stream_tab,     # columns: RA, DEC, Rsun
+    idx_sim_box,        # indices into sim_stream_tab to show
+    gc_ra,              # deg (float or Quantity)
+    gc_dec,             # deg (float or Quantity)
+    gc_rt,              # length Quantity (e.g., kpc)
+    gc_rsun,            # length Quantity (e.g., kpc)
+    gc_name="GC",
+    cmap="viridis",
+    point_size=18,
+    padding=1.0,
+):
+    # --- pick sim subset ---
+    sim_sel = sim_stream_tab[idx_sim_box]
+
+    # --- exactly as requested ---
+    ra_sf,  dec_sf,  r_sf  =  sf_data["RAdeg"], sf_data["DEdeg"], sf_data["Rsun"]
+    ra_sim, dec_sim, r_sim =  sim_sel["RA"],   sim_sel["DEC"],   sim_sel["DIST"]
+
+    # Cast to plain floats for plotting/stats (keeps it robust if columns have units)
+    ra_sf  = np.asarray(ra_sf,  dtype=float)
+    dec_sf = np.asarray(dec_sf, dtype=float)
+    r_sf   = np.asarray(r_sf,   dtype=float)
+
+    ra_sim  = np.asarray(ra_sim,  dtype=float)
+    dec_sim = np.asarray(dec_sim, dtype=float)
+    r_sim   = np.asarray(r_sim,   dtype=float)
+
+    # Shared color normalization for Rsun
+    all_r = np.concatenate([r_sf[np.isfinite(r_sf)], r_sim[np.isfinite(r_sim)]])
+    vmin = np.nanpercentile(all_r, 5) if all_r.size else 0.0
+    vmax = np.nanpercentile(all_r, 95) if all_r.size else 1.0
+    if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin == vmax:
+        vmin, vmax = (float(np.nanmin(all_r)), float(np.nanmax(all_r))) if all_r.size else (0.0, 1.0)
+        if vmin == vmax:
+            vmin, vmax = vmin - 1e-3, vmin + 1e-3
+    norm = Normalize(vmin=vmin, vmax=vmax)
+
+    # Figure
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6), sharex=True, sharey=True, constrained_layout=True)
+
+    # Tidal radius circle on both panels
+    radius_deg = (np.arctan((gc_rt.to(u.kpc) / gc_rsun).value) * u.rad).to_value(u.deg)
+    gc_ra_f = float(getattr(gc_ra, "value", gc_ra))
+    gc_dec_f = float(getattr(gc_dec, "value", gc_dec))
+    for ax in (ax1, ax2):
+        ax.add_patch(Circle((gc_ra_f, gc_dec_f), radius_deg,
+                            edgecolor="crimson", facecolor="none", lw=1.8, zorder=6,
+                            label="GC tidal radius (r_t)"))
+
+    # Scatter plots (colored by Rsun)
+    ax1.scatter(ra_sf,  dec_sf,  c=r_sf,  s=point_size, cmap=cmap, norm=norm, linewidths=0, zorder=3)
+    ax1.set_title(f"STREAMFINDER (n={len(sf_data)})")
+
+    ax2.scatter(ra_sim, dec_sim, c=r_sim, s=point_size, cmap=cmap, norm=norm, linewidths=0, zorder=3)
+    ax2.set_title(f"Simulation (n={len(sim_sel)})")
+
+    # Labels, limits, reverse RA like sky
+    for ax in (ax1, ax2):
+        ax.set_xlabel("RA [deg]")
+        ax.set_ylabel("Dec [deg]")
+        ax.grid(True, alpha=0.35)
+
+    ra_min = np.nanmin(np.concatenate([ra_sf, ra_sim]))
+    ra_max = np.nanmax(np.concatenate([ra_sf, ra_sim]))
+    dec_min = np.nanmin(np.concatenate([dec_sf, dec_sim]))
+    dec_max = np.nanmax(np.concatenate([dec_sf, dec_sim]))
+    ax1.set_xlim(ra_max + padding, ra_min - padding)  # reverse RA
+    ax1.set_ylim(dec_min - padding, dec_max + padding)
+    ax1.legend(loc="best", fontsize=9)
+
+    # Shared colorbar
+    sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap); sm.set_array([])
+    cbar = fig.colorbar(sm, ax=[ax1, ax2], fraction=0.046, pad=0.04)
+    cbar.set_label("Rsun (heliocentric distance) [kpc]")
+
+    # Save
+    out_dir = f"results/{gc_name}"
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, f"{gc_name}_sf_vs_sim_Rsun_subplots.png")
+    fig.suptitle("STREAMFINDER vs Simulation — colored by Rsun")
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    print(f"[v] Saved subplot figure to: {out_path}")
+
+    return fig, (ax1, ax2)
+
+from matplotlib.colors import LogNorm
+
+def plot_fm_density(
+    FM_T_pos_sel,                 # already filtered table
+    ra_col="TARGET_RA",
+    dec_col="TARGET_DEC",
+    gridsize=120,
+    cmap="viridis",
+    padding=1.0,
+    method="hexbin",              # "hexbin" or "hist2d"
+    save_path=None,
+    title=None,
+):
+    ra  = np.asarray(FM_T_pos_sel[ra_col], dtype=float)
+    dec = np.asarray(FM_T_pos_sel[dec_col], dtype=float)
+
+    if ra.size == 0:
+        print("[density] No rows to plot.")
+        return None, None
+
+    fig, ax = plt.subplots(figsize=(8, 7), constrained_layout=True)
+
+    if method == "hexbin":
+        m = ax.hexbin(ra, dec, gridsize=gridsize, bins="log", cmap=cmap)
+        cbar = fig.colorbar(m, ax=ax, fraction=0.046, pad=0.04)
+    else:
+        h = ax.hist2d(ra, dec, bins=gridsize, norm=LogNorm(), cmap=cmap)
+        cbar = fig.colorbar(h[3], ax=ax, fraction=0.046, pad=0.04)
+
+    cbar.set_label("Counts (log scale)")
+    ax.set_xlabel("RA [deg]")
+    ax.set_ylabel("Dec [deg]")
+    ax.set_title(title or f"DESI FM number density (n={ra.size})")
+
+    # reverse RA like a sky plot
+    ax.set_xlim(np.nanmax(ra) + padding, np.nanmin(ra) - padding)
+    ax.set_ylim(np.nanmin(dec) - padding, np.nanmax(dec) + padding)
+    ax.grid(True, alpha=0.3)
+
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
+        print(f"[v] saved: {save_path}")
+
+    return fig, ax

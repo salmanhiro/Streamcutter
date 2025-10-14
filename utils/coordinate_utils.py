@@ -3,12 +3,11 @@ import numpy as np
 import astropy.units as u
 from astropy.coordinates import SkyCoord, Galactocentric, CartesianRepresentation, CartesianDifferential
 
-
 def get_observed_coords(
     xv,
     assume='galactocentric_vxyz',
-    R0_kpc=8.5, # Schonrich et al 2010
-    Zsun_kpc=0.1,
+    R0_kpc=8.5, # Bland-Hawthorn & Gerhard 2016
+    Zsun_pc=25, # Bland-Hawthorn & Gerhard 2016
 ):
     """
     Convert Galactocentric phase-space coords -> heliocentric observables.
@@ -38,24 +37,14 @@ def get_observed_coords(
     z = xv[:, 2] * u.kpc
 
     # velocities
-    V1 = xv[:, 3] * (u.km/u.s)
-    V2 = xv[:, 4] * (u.km/u.s)
-    V3 = xv[:, 5] * (u.km/u.s)
-
-    if assume.lower() == 'heliocentric_uvw':
-        # Convert classic UVW -> Galactocentric (v_x,v_y,v_z)
-        # Conventions: U (+) toward GC, V (+) in rotation, W (+) to NGP
-        # Astropy Galactocentric has +x from GC toward Sun, +y in rotation, +z to NGP.
-        vx = -V1    # -U
-        vy =  V2    #  V
-        vz =  V3    #  W
-    else:
-        vx, vy, vz = V1, V2, V3
+    vx = xv[:, 3] * (u.km/u.s)
+    vy = xv[:, 4] * (u.km/u.s)
+    vz = xv[:, 5] * (u.km/u.s)
 
     # Build a Galactocentric frame with explicit Sun position (keeps you honest)
     gc_frame = Galactocentric(
         galcen_distance=R0_kpc * u.kpc,
-        z_sun=Zsun_kpc * u.kpc,
+        z_sun=Zsun_pc * u.pc,
     )
 
     # Use explicit Cartesian rep/diff (no transposes; pass named components)
@@ -78,3 +67,68 @@ def get_observed_coords(
     # You might print or log np.median(vtan_pm / (vtan_in+1e-8)) to ensure ~O(1).
 
     return ra, dec, vlos, pmra, pmde, dist
+
+def get_galactocentric_coords(
+    ra_deg,
+    dec_deg,
+    distance_kpc,
+    vlos_kms,
+    pmra_masyr,
+    pmdec_masyr,
+    R0_kpc=8.5,  # Bland-Hawthorn & Gerhard 2016
+    Zsun_pc=25  # Bland-Hawthorn & Gerhard 2016
+):
+    """
+    Convert heliocentric observables -> Galactocentric Cartesian (x, y, z, vx, vy, vz).
+
+    Parameters
+    ----------
+    ra_deg, dec_deg : float or array
+        Right Ascension and Declination in degrees.
+    distance_kpc : float or array
+        Distance in kpc.
+    vlos_kms : float or array
+        Radial velocity in km/s.
+    pmra_masyr, pmdec_masyr : float or array
+        Proper motions in mas/yr.
+    R0_kpc : float
+        Distance from Sun to Galactic Center (default: 8.5 kpc).
+    Zsun_pc : float
+        Height of Sun above the Galactic plane (default: 25 pc).
+
+    Returns
+    -------
+    x, y, z : kpc
+    vx, vy, vz : km/s
+        Galactocentric Cartesian position and velocity.
+    """
+
+    # Construct the ICRS (RA/Dec) frame with velocities
+    icrs = SkyCoord(
+        ra=ra_deg * u.deg,
+        dec=dec_deg * u.deg,
+        distance=distance_kpc * u.kpc,
+        pm_ra_cosdec=pmra_masyr * u.mas/u.yr,
+        pm_dec=pmdec_masyr * u.mas/u.yr,
+        radial_velocity=vlos_kms * u.km/u.s
+    )
+
+    # Define the Galactocentric frame with solar parameters
+    gc_frame = Galactocentric(
+        galcen_distance=R0_kpc * u.kpc,
+        z_sun=Zsun_pc * u.pc,
+    )
+
+    # Transform to Galactocentric frame
+    gc = icrs.transform_to(gc_frame)
+
+    # Extract Cartesian position and velocity
+    x = gc.cartesian.x.to(u.kpc).value
+    y = gc.cartesian.y.to(u.kpc).value
+    z = gc.cartesian.z.to(u.kpc).value
+
+    vx = gc.velocity.d_x.to(u.km/u.s).value
+    vy = gc.velocity.d_y.to(u.km/u.s).value
+    vz = gc.velocity.d_z.to(u.km/u.s).value
+
+    return np.column_stack([x, y, z, vx, vy, vz])
