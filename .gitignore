@@ -1,9 +1,15 @@
 start_fomalhaut.sh
 
-data/*.fits
+data/*
 figures/*
 results/*
 submitted_jobs/*
+pot_compare/*
+simulated_streams/*
+stream_candidates/*
+*.out
+notebooks/* 
+# change notebooks later
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
