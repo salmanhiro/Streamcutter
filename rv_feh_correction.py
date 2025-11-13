@@ -1,6 +1,7 @@
 from astropy.table import Table
 import numpy as np
 from utils import feh_correct
+from astropy.io import fits
 
 print("Reading RV table and applying corrections...")
 # Koposov https://academic.oup.com/mnras/article/533/1/1012/7724389
@@ -14,6 +15,14 @@ RV_T = Table().read('data/mwsall-pix-iron.fits',
 
 FM_T = Table().read('data/mwsall-pix-iron.fits',
                         'FIBERMAP',
+                        mask_invalid=False)
+
+SP_T = Table().read('data/mwsall-pix-iron.fits',
+                        'SPTAB',
+                        mask_invalid=False)
+
+GAIA_T = Table().read('data/mwsall-pix-iron.fits',
+                        'GAIA',
                         mask_invalid=False)
 
 RV_T['FEH_CORRECTED'] = feh_correct.calibrate(RV_T['FEH'], RV_T['TEFF'], RV_T['LOGG'])
@@ -48,17 +57,34 @@ print(f"Rows uncorrected (missing VRAD_BIAS): {(np.isnan(RV_T['VRAD_BIAS'])).sum
 assert np.all(~np.isnan(RV_T["VRAD_CORRECTED"]))
 print(f"VRAD_CORRECTED stats: mean={np.nanmean(RV_T['VRAD_CORRECTED']):.2f}, std={np.nanstd(RV_T['VRAD_CORRECTED']):.2f}, min={np.nanmin(RV_T['VRAD_CORRECTED']):.2f}, max={np.nanmax(RV_T['VRAD_CORRECTED']):.2f}")
 
-# Save the corrected RV table for future use
 corrected_fits_path = 'data/mwsall-pix-iron-rv-corrected.fits'
-RV_T.write(corrected_fits_path, overwrite=True)
+
+h0 = fits.PrimaryHDU()
+h1 = fits.table_to_hdu(RV_T); h1.name = 'RVTAB'      # corrected RV table
+h2 = fits.table_to_hdu(SP_T); h2.name = 'SPTAB'   # COPY of SP_T, unchanged
+h3 = fits.table_to_hdu(FM_T); h3.name = 'FIBERMAP'   # COPY of FM_T, unchanged
+h5 = fits.table_to_hdu(GAIA_T); h5.name = 'GAIA'      # COPY of GAIA_T, unchanged
+
+fits.HDUList([h0, h1, h2, h3, h5]).writeto(corrected_fits_path, overwrite=True)
+print(f"[v] wrote multi-HDU file with RVTAB+FIBERMAP to {corrected_fits_path}")
+
+# Re-read to verify
+RV_T = Table.read(corrected_fits_path, 'RVTAB',    mask_invalid=False)
+SP_T = Table.read(corrected_fits_path, 'SPTAB',    mask_invalid=False)
+FM_T = Table.read(corrected_fits_path, 'FIBERMAP', mask_invalid=False)
+GAIA_T = Table.read(corrected_fits_path, 'GAIA',    mask_invalid=False)
 
 # print first 5 data of FM_T and RV_T and check their TARGETID is the same
 print("First 5 rows of FM_T TARGETID:", FM_T['TARGETID'][:5])
+print("First 5 rows of SP_T TARGETID:", SP_T['TARGETID'][:5])
 print("First 5 rows of RV_T TARGETID:", RV_T['TARGETID'][:5])
 print("Last 5 rows of FM_T TARGETID:", FM_T['TARGETID'][-5:])
+print("Last 5 rows of SP_T TARGETID:", SP_T['TARGETID'][-5:])
 print("Last 5 rows of RV_T TARGETID:", RV_T['TARGETID'][-5:])
-print("Checking TARGETID match between FM_T and RV_T...")
-assert np.all(FM_T['TARGETID'] == RV_T['TARGETID'])
+print("Checking TARGETID match between Tables...")
+assert np.all(FM_T['TARGETID'] == RV_T['TARGETID'] == SP_T['TARGETID'])
+assert len(FM_T) == len(RV_T) == len(SP_T)
+
 print("TARGETID match confirmed.")
 
 print("RV and [Fe/H] corrections applied and saved.")

@@ -216,7 +216,6 @@ def plot_matched_streamfinder_vs_sim(
     plt.close(fig)
     return ax
 
-
 def plot_overlay_streamfinder_vs_sim(
     sf_data,
     sim_stream_tab,
@@ -284,18 +283,18 @@ def plot_overlay_streamfinder_vs_sim(
     return ax
 
 def plot_density_with_sim_stream(
-    RV_T,
+    FM_T,
     sim_stream_tab,
-    main_sel,
     gc_df,
     gc_name="GC",
     bins=(100, 100),
-    cmap='plasma',
-    cmin=1
+    cmap='viridis',
+    cmin=1,
+    save_path=None
 ):
     # Extract target coordinates
-    ra  = np.asarray(RV_T['TARGET_RA'][main_sel],  float)
-    dec = np.asarray(RV_T['TARGET_DEC'][main_sel], float)
+    ra  = np.asarray(FM_T['TARGET_RA'],  float)
+    dec = np.asarray(FM_T['TARGET_DEC'], float)
 
     # Sim stream extent
     ra_min, ra_max = min(sim_stream_tab["RA"].value), max(sim_stream_tab["RA"].value)
@@ -316,6 +315,9 @@ def plot_density_with_sim_stream(
                s=2, c='black', alpha=0.6, lw=0,
                zorder=3, label=f"Sim stream (n={len(sim_stream_tab)})")
 
+    # add desi region
+    plot_desi_region(ax=ax, length_threshold=5, color="black")
+    
     # GC marker
     gc_ra = gc_df["RA"][0]; gc_dec = gc_df["DEC"][0]
     gc_ra_deg  = gc_ra.to_value(u.deg)  if getattr(gc_ra,  "unit", None) else float(gc_ra)
@@ -339,16 +341,12 @@ def plot_density_with_sim_stream(
     ax.set_title(f"Simulated {gc_name} stream in DESI MWS tiles background")
     plt.tight_layout()
 
-    # Save plot
-    out_dir = f"results/{gc_name}"
-    os.makedirs(out_dir, exist_ok=True)
-    out_path = f"results/{gc_name}/{gc_name}_density_with_sim_stream.png"
-    plt.savefig(out_path, dpi=300, bbox_inches='tight')
-    print(f"[v] Saved density plot to: {out_path}")
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path, dpi=300)
+        print(f"[v] saved: {save_path}")
 
-    plt.close(fig)
     return ax
-
 
 
 def _fit_and_plot_hist(ax, data, bins, color, xlabel, title):
@@ -371,6 +369,7 @@ def _fit_and_plot_hist(ax, data, bins, color, xlabel, title):
     ax.set_title(title)
     ax.legend()
     return mu, sigma
+
 def plot_candidate_histograms(candidates_fm, candidates_rv, gc_name, out_dir, gc_df=None):
     import os
     import matplotlib.pyplot as plt
@@ -556,6 +555,8 @@ def plot_fm_density(
         h = ax.hist2d(ra, dec, bins=gridsize, norm=LogNorm(), cmap=cmap)
         cbar = fig.colorbar(h[3], ax=ax, fraction=0.046, pad=0.04)
 
+    # plot desi region
+    plot_desi_region(ax=ax, length_threshold=5, color="black")
     cbar.set_label("Counts (log scale)")
     ax.set_xlabel("RA [deg]")
     ax.set_ylabel("Dec [deg]")
@@ -572,3 +573,81 @@ def plot_fm_density(
         print(f"[v] saved: {save_path}")
 
     return fig, ax
+
+def plot_sim_stream(
+    sim_stream_tab,
+    gc_df=None,
+    gc_name="GC",
+    s=4,                   # marker size for stream points
+    c='black',             # color for stream points
+    alpha=0.7,
+    pad_frac=0.03,         # 3% padding around data limits
+    save_path=None,
+    potential_name=""
+):
+    """
+    Plot only the simulated stream (RA, Dec), optionally marking the globular cluster.
+
+    Parameters
+    ----------
+    sim_stream_tab : table-like
+        Must have columns "RA" and "DEC". Values can be floats or astropy Quantities.
+    gc_df : pandas.DataFrame or dict-like, optional
+        If provided, must contain "RA" and "DEC" for the cluster; values can be floats or Quantities.
+    gc_name : str
+        Annotation next to the GC marker.
+    s, c, alpha : stream scatter style
+    pad_frac : float
+        Fractional padding applied to RA/Dec ranges.
+    save_path : str or None
+        If given, save the figure to this path.
+    """
+    # Extract sim-stream coords with unit safety
+    ra_col  = sim_stream_tab["RA"]
+    dec_col = sim_stream_tab["DEC"]
+    ra_vals  = ra_col.to_value(u.deg)  if getattr(ra_col,  "unit", None) else np.asarray(ra_col,  float)
+    dec_vals = dec_col.to_value(u.deg) if getattr(dec_col, "unit", None) else np.asarray(dec_col, float)
+
+    # Compute bounds with a touch of padding
+    ra_min, ra_max   = np.nanmin(ra_vals),  np.nanmax(ra_vals)
+    dec_min, dec_max = np.nanmin(dec_vals), np.nanmax(dec_vals)
+    d_ra  = (ra_max - ra_min) if np.isfinite(ra_max - ra_min) else 1.0
+    d_dec = (dec_max - dec_min) if np.isfinite(dec_max - dec_min) else 1.0
+    pad_ra, pad_dec = d_ra*pad_frac, d_dec*pad_frac
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    # Stream overlay only
+    ax.scatter(ra_vals, dec_vals, s=s, c=c, alpha=alpha, lw=0, zorder=2, label=f"Sim stream (n={len(ra_vals)})")
+
+    # Plot DESI
+    plot_desi_region(ax=ax, length_threshold=5, color="black")
+    # Optional GC marker
+    if gc_df is not None:
+        gc_ra = gc_df["RA"][0]; gc_dec = gc_df["DEC"][0]
+        gc_ra_deg  = gc_ra.to_value(u.deg)  if getattr(gc_ra,  "unit", None) else float(gc_ra)
+        gc_dec_deg = gc_dec.to_value(u.deg) if getattr(gc_dec, "unit", None) else float(gc_dec)
+        ax.scatter(gc_ra_deg, gc_dec_deg, s=80, marker='*', facecolor='crimson',
+                   edgecolor='k', linewidths=0.8, zorder=3)
+        ax.annotate(gc_name, (gc_ra_deg, gc_dec_deg),
+                    xytext=(6, 6), textcoords='offset points',
+                    fontsize=9, color='black')
+
+    # Axes, limits, and cosmetics
+    ax.set_xlabel("RA [deg]")
+    ax.set_ylabel("Dec [deg]")
+    ax.legend(loc='upper right', fontsize=8, frameon=False)
+
+    ax.invert_xaxis()  # sky convention
+    ax.set_xlim(ra_max + pad_ra, ra_min - pad_ra)
+    ax.set_ylim(dec_min - pad_dec, dec_max + pad_dec)
+    ax.set_title(f"Simulated {gc_name} stream in {potential_name} potential")
+
+    plt.tight_layout()
+
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path, dpi=300)
+        print(f"[v] saved: {save_path}")
+
+    return ax
