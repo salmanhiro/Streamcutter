@@ -1,127 +1,139 @@
-import argparse
-import pandas as pd
-from astropy.table import QTable, Table
-import numpy as np
+# streamcutter.py (fetch-only)
+import argparse, os, time
 import astropy.units as u
-import agama
-from utils import plot_utils, mock_stream_utils, coordinate_utils, selection_utils
-import os 
-import time
+from astropy.table import QTable
+
+from utils.desi_utils import (
+    GCParams, PotentialFactory, StreamSimulator,
+    DESIData, DESISelector, Plotter, Exporter, SweepFetcher
+)
 
 def main():
-    parser = argparse.ArgumentParser(description="StreamCutter GC setup")
-    parser.add_argument("--gc", type=str, required=True, help="Globular cluster name (e.g., 'Pal_5')")
-    parser.add_argument("--potential", type=str, default="MWPotential2014", help="Potential name (default: MWPotential2022)")
-    parser.add_argument("--n-particles", type=int, default=10000, help="Number of stream particles to simulate (default: 2000)")
-    parser.add_argument("--pm-sigma", type=float, default=1.0, help="Fraction for PM box cut (default: 2)")
-    parser.add_argument("--sep-max", type=float, default=1.0, help="Max separation in degrees for positional cut (default: 1.0)")
-    parser.add_argument("--n-orbits", type=int, default=3, help="Number of orbits to simulate (default: 3)")
-    
-    args = parser.parse_args()
+    p = argparse.ArgumentParser(description="StreamCutter GC setup (OO refactor)")
+    p.add_argument("--gc", required=True, help="Globular cluster name (e.g., 'Pal_5')")
+    p.add_argument("--potential", default="MWPotential2022")
+    p.add_argument("--n-particles", type=int, default=10000)
+    p.add_argument("--sep-max", type=float, default=1.0)
+    p.add_argument("--n-orbits", type=int, default=3)
+    p.add_argument("--simulate-only", action="store_true")
+    p.add_argument("--no-plot", action="store_true")
 
-    gc_name = args.gc
-    potential_name = args.potential
-    n_particles = args.n_particles
-    sep_max = args.sep_max
-    n_orbits = args.n_orbits
-    pm_sigma = args.pm_sigma
+    # sweep fetch (copy bricks, no loading)
+    p.add_argument("--sweep-lookup-csv", default="./data/sweep_photometry_lookup_coord.csv")
+    p.add_argument("--fetch-sweep", action="store_true", help="Copy needed sweep bricks locally")
+    p.add_argument("--sweep-min-count", type=int, default=50)
+    p.add_argument("--sweep-dest-dir", default="./data/sweep_catalogue",
+                   help="Local dir where sweep bricks will be stored")
 
-    # Load GC parameters
-    gc_param_path = "data/mw_gc_parameters_orbital_structural_time.ecsv"
-    gc_df = QTable.read(gc_param_path)
-    gc_df = gc_df[gc_df["Cluster"] == gc_name]
-    if len(gc_df) == 0:
-        raise ValueError(f"Cluster '{gc_name}' not found in GC parameter file: {gc_param_path}")
+    # Full nbody additional options
+    p.add_argument("--sim-mode", choices=["restricted", "full"], default="restricted",
+                   help="restricted = original streakline (default); full = pyfalcon self-grav")
+    p.add_argument("--vcirc10", type=float, default=200.0,
+                   help="Host normalization: v_circ(10 kpc) [km/s] (full mode)")
+    p.add_argument("--eps", type=float, default=0.1,
+                   help="Softening length [kpc] for full N-body (pyfalcon)")
+    p.add_argument("--tau", type=float, default=None,
+                   help="Leapfrog step (kpc/(km/s)); if None, auto-choose (full mode)")
+    p.add_argument("--no-df", action="store_true",
+                   help="Disable Chandrasekhar DF on the CoM in full mode")
 
-    # Agama units
-    agama.setUnits(length=1, velocity=1, mass=1)
-    timeUnitGyr = agama.getUnits()['time']
+    args = p.parse_args()
 
-    # Extract GC info
-    row = gc_df[0]
-    ra_q, dec_q, dist_q = row["RA"].value, row["DEC"].value, row["Rsun"].value
-    pmra, pmdec = row["mualpha"].value, row["mu_delta"].value
-    mass_sat, rv = row["Mass"].value, row["<RV>"].value
-    rhm = row["rh,m"].value
+    #  Load GC row
+    gc = GCParams().get_row(args.gc)
 
-    orbit_t = row["orbit_period_max"].value
-
-    # Setup potential & progenitor
-    pot_host = agama.GalaPotential(f"potentials/{potential_name}.ini")
-    pot_sat = agama.GalaPotential(type='Plummer', mass=mass_sat, scaleRadius=rhm)
-    prog_w0 = coordinate_utils.get_galactocentric_coords(ra_q, dec_q, dist_q, rv, pmra, pmdec)[0]
-    # Stream generation
-    time_total = (-n_orbits * orbit_t)/978 if orbit_t < 1000 else -3
-    print(f"Simulating stream for {time_total:.2f} Gyr with {n_particles} particles...")
-    time_sat, orbit_sat, xv_stream, ic_stream = mock_stream_utils.create_stream(
-        mock_stream_utils.create_initial_condition_fardal15,
-        np.random.default_rng(0),
-        time_total, n_particles,
-        pot_host, prog_w0, mass_sat,
-        pot_sat=pot_sat
+    #  Simulate
+    factory = PotentialFactory()
+    sim = StreamSimulator(
+        factory,
+        sim_mode=args.sim_mode,         # "restricted" (default) or "full"
+        vcirc10=args.vcirc10,          # used only in full mode
+        eps=args.eps,                  # used only in full mode
+        tau=args.tau,                  # used only in full mode
+        use_df=not args.no_df          # used only in full mode
+    )
+    time_sat, orbit_sat, xv_stream, ic_stream, sim_stream_tab = sim.simulate(
+        gc_row=gc,
+        potential_name=args.potential,
+        n_particles=args.n_particles,
+        n_orbits=args.n_orbits,
+        rng_seed=0
     )
 
-    # Convert to observables
-    ra, dec, vlos, pmra, pmdec, dist = coordinate_utils.get_observed_coords(xv_stream)
+    # Save sim stream (always)
+    out_sim_dir = "simulated_streams"
+    os.makedirs(out_sim_dir, exist_ok=True)
+    sim_path = f"{out_sim_dir}/simulated_stream_{args.gc}.fits"
+    Exporter.write_sim_stream(sim_path, sim_stream_tab)
+    print(f"[v] wrote simulated stream to: {sim_path}")
 
-    sim_stream_tab = QTable({
-        "RA":    ra * u.deg,
-        "DEC":   dec * u.deg,
-        "PMRA":  pmra * u.mas/u.yr,
-        "PMDEC": pmdec * u.mas/u.yr,
-        "VLOS":  vlos * u.km/u.s,
-        "DIST":  dist * u.kpc,
-        "X":     (xv_stream[:, 0] * u.kpc),
-        "Y":     (xv_stream[:, 1] * u.kpc),
-        "Z":     (xv_stream[:, 2] * u.kpc),
-        "Vx":    (xv_stream[:, 3] * u.km/u.s),
-        "Vy":    (xv_stream[:, 4] * u.km/u.s),
-        "Vz":    (xv_stream[:, 5] * u.km/u.s),
-    })
+    if not args.no_plot:
+        tag = f"{args.potential} / {args.sim_mode}"
+        Plotter.sim_stream(sim_stream_tab, gc,
+                           save_path=f"{out_sim_dir}/{args.gc}_simulated_stream.png",
+                           potential_name=tag)
 
-    print(f"Simulated stream particles: {len(sim_stream_tab)}")
+    # Fetch/copy sweep bricks that cover the simulated stream footprint
+    if args.fetch_sweep:
+        sf = SweepFetcher(args.sweep_lookup_csv)
+        res = sf.fetch(sim_stream_tab["RA"], sim_stream_tab["DEC"],
+                       dest_dir=args.sweep_dest_dir,
+                       min_count=args.sweep_min_count,
+                       skip_if_exists=True, dry_run=False)
+        print(f"[sweep] selected={len(res['selected_files'])} "
+              f"copied={len(res['copied_files'])} "
+              f"skipped={len(res['skipped_existing'])} "
+              f"missing={len(res['missing_source_files'])}")
+        # Optional: write a small manifest to the dest dir
+        if res["selected_files"]:
+            os.makedirs(args.sweep_dest_dir, exist_ok=True)
+            manifest = os.path.join(args.sweep_dest_dir, f"sweep_manifest_{args.gc}.txt")
+            with open(manifest, "w") as f:
+                f.write("\n".join(sorted(res["selected_files"])))
+            print(f"[sweep] manifest -> {manifest}")
 
-    RV_T = Table().read('data/mwsall-pix-iron-rv-corrected.fits',
-                            'RVTAB',
-                            mask_invalid=False)
+    if args.simulate_only:
+        return
 
-    FM_T = Table().read('data/mwsall-pix-iron-rv-corrected.fits',
-                            'FIBERMAP',
-                            mask_invalid=False)
+    #  DESI IO
+    RV_T, FM_T = DESIData().load()
+    print(f"[i] DESI tables loaded: RV={len(RV_T)} FM={len(FM_T)}")
 
+    # Basic main selection (your original flags)
     main_sel = RV_T['PRIMARY'] & (RV_T['RVS_WARN'] == 0) & (RV_T['RR_SPECTYPE'] == 'STAR')
     RV_T_sel = RV_T[main_sel]
     FM_T_sel = FM_T[main_sel]
 
-    # Apply positional cuts
-    mask_boxcut, idx_sim_box = selection_utils.cone_cut_DESI(FM_T_sel, RV_T_sel, sim_stream_tab, sep_max=sep_max*u.deg)
-    print(f"Positional cone cut from DESI FM numbers: {mask_boxcut.sum()}")
+    #  Positional cone cut
+    mask_boxcut, RV_T_pos, FM_T_pos = DESISelector.positional_cone_cut(
+        FM_T_sel, RV_T_sel, sim_stream_tab, sep_max_deg=args.sep_max
+    )
+    print(f"[i] Positional cone cut count: {mask_boxcut.sum()}")
 
-    RV_T_pos_sel = RV_T_sel[mask_boxcut]
-    FM_T_pos_sel = FM_T_sel[mask_boxcut]
+    #  GC region masks/splits
+    row = gc[0]
+    res = DESISelector.gc_masks_and_splits(
+        RV_T_pos_sel=RV_T_pos,
+        FM_T_pos_sel=FM_T_pos,
+        ra_deg=row['RA'], dec_deg=row['DEC'],
+        rsun_pc=row['Rsun'].to(u.pc), rt_pc=row['rt']
+    )
+    print(f"[i] Stars in GC region: {res.gc_region_mask.sum()}")
 
-    # Check GC region from DESI
-    ra_deg = row['RA']
-    dec_deg = row['DEC']
-    rsun_pc = row['Rsun'].to(u.pc)
-    rt_pc = row['rt'] 
+    #  Plots
+    os.makedirs("figures", exist_ok=True)
+    Plotter.fm_density(res.FM_T_final, save_path=f"figures/{args.gc}_final_candidate_density.png")
+    Plotter.density_with_sim(res.FM_T_final, sim_stream_tab, gc,
+                             save_path=f"figures/{args.gc}_candidates_with_sim_stream.png")
 
-    gc_region_mask = selection_utils.mask_gc_region_DESI(FM_T_pos_sel, ra_deg, dec_deg, rsun_pc, rt_pc)
-    print(f"Number of stars in GC region from DESI FM numbers: {gc_region_mask.sum()}")
+    #  Exports
+    os.makedirs("stream_candidates", exist_ok=True)
+    Exporter.write_candidates(f"stream_candidates/stream_candidates_{args.gc}.fits",
+                              res.RV_T_final, res.FM_T_final)
+    print(f"[v] wrote candidates to: stream_candidates/stream_candidates_{args.gc}.fits")
 
-    outside_gc_mask_pos = ~gc_region_mask
-
-    RV_T_final = RV_T_pos_sel[outside_gc_mask_pos]
-    FM_T_final = FM_T_pos_sel[outside_gc_mask_pos]
-
-    # Save fits files
-    output_dir = f"stream_candidates/{gc_name}"
-    os.makedirs(output_dir, exist_ok=True)
-    RV_T_final.write(f"{output_dir}/RVT_stream_candidates_{gc_name}.fits", overwrite=True)
-    FM_T_final.write(f"{output_dir}/FIBERMAP_stream_candidates_{gc_name}.fits", overwrite=True)
-
-    print(f"FM_T columns: {FM_T_final.colnames}")
 if __name__ == "__main__":
-    start = time.time()
+    t0 = time.time()
     main()
-    print(f"Time taken: {time.time() - start:.2f} seconds")
+    print(f"Time taken: {time.time()-t0:.2f}s")
+

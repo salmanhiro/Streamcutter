@@ -17,6 +17,12 @@ from utils import mock_stream_utils, coordinate_utils
 ALL_POTENTIALS = [
     "BarMWPortail17.ini",
     "MWPotential2014.ini",
+    "BT08",
+    "Cautun20",
+    "SCM_MW",
+    "LMCVasiliev24",
+    "DB98",
+    "MWPotential2022"
 ]
 
 def simulate_stream_for_potential(gc_row, pot_ini_path, n_particles, n_orbits, seed=0):
