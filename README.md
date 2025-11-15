@@ -91,7 +91,10 @@ Make sure you have the following installed:
 
 ## Credit
 If you use Streamcutter in your work (which currently the program is also in preparation), please cite:
+
+```
 Farisi S. A. and Cooper A. P. (in prep.), Diffuse Globular Cluster Debris in the DESI Milky Way Survey.
+```
 
 ## Example Workflow
 ### Generate simulated streams
@@ -110,7 +113,8 @@ python get_tractor_footprint.py --sim-file simulated_streams/simulated_stream_Pa
 
 For further inquiries please contact: 
 
+```
 Salman A. Farisi
 Institute of Astronomy, National Tsing Hua University
 📧 salman@gapp.nthu.edu.tw
-
+```
