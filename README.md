@@ -2,6 +2,7 @@
 
 Streamcutter is a toolkit for detecting and modeling diffuse stellar streams from globular cluster debris.
 It performs filtering using proper-motion box cuts, spatial cone cuts, and tidal-radius exclusion to isolate likely stream member candidates from Gaia and DESI datasets.
+This project is ongoing.
 
 ## Overview
 
@@ -94,14 +95,17 @@ Farisi S. A. and Cooper A. P. (in prep.), Diffuse Globular Cluster Debris in the
 
 ## Example Workflow
 ### Generate simulated streams
+```
 python simulate_compare_potentials.py
-
+```
 ### Extract stream candidates for Pal 5
+```
 python select_stream_candidates.py --GC Pal_5
-
+```
 ### Build DESI footprints for Pal 5
-srun python get_tractor_footprint.py --sim-file simulated_streams/simulated_stream_Pal_5.fits --concat --outdir ./tractor_outputs
-
+```
+python get_tractor_footprint.py --sim-file simulated_streams/simulated_stream_Pal_5.fits --concat --outdir ./tractor_outputs
+```
 ## Author
 
 For further inquiries please contact: 
