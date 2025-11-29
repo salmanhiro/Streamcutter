@@ -1,9 +1,23 @@
+from __future__ import annotations
 import astropy.units as u
 import numpy as np
 import matplotlib.pyplot as plt
 from astropy.coordinates import SkyCoord, Galactocentric, CartesianDifferential, CartesianRepresentation, ICRS
 import agama
 from utils.coordinate_utils import get_observed_coords
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Tuple, Optional, Iterable, Set, List
+
+import os
+import shutil
+import numpy as np
+import astropy.units as u
+from astropy.table import QTable, Table
+import agama
+
+# Your existing utils
+from utils import coordinate_utils
 
 
 def galactocentric_to_icrs(x, y, z, vx, vy, vz):
@@ -163,3 +177,128 @@ def create_stream(create_ic_method, rng, time_total, num_particles, pot_host, po
     xv_stream = np.vstack(agama.orbit(potential=pot_tot,
         ic=ic_stream, time=-time_seed if time_total<0 else time_total-time_seed, timestart=time_seed, trajsize=1)[:,1])
     return time_sat, orbit_sat, xv_stream, ic_stream
+
+class StreamSimulator:
+    """Simulate a tidal stream (restricted or full N-body) and return phase-space + observables."""
+    def __init__(
+        self,
+        factory,
+        sim_mode: str = "restricted",   # "restricted" (default) or "full"
+        # knobs for FULL N-body mode (ignored in restricted)
+        vcirc10: float = 200.0,         # host normalization: v_circ(10 kpc) [km/s]
+        eps: float = 0.1,               # softening length [kpc]
+        tau: Optional[float] = None,    # leapfrog step in AGAMA time units (kpc / km/s)
+        use_df: bool = True,            # apply Chandrasekhar DF to CoM in full mode
+        total_time: Optional[float] = None,  # total time in Gyr (if provided)
+    ):
+        self.factory  = factory
+        self.sim_mode = sim_mode
+        self.vcirc10  = float(vcirc10)
+        self.eps      = float(eps)
+        self.tau      = tau
+        self.use_df   = bool(use_df)
+        self.total_time = total_time  # Store total time if provided
+
+    @staticmethod
+    def _total_time_gyr(orbit_period_max: float, n_orbits: int) -> float:
+        # Keep your original heuristic:
+        return (-n_orbits * orbit_period_max) / 978.0 if orbit_period_max < 1000 else -3.0
+
+    def simulate(
+        self,
+        gc_row: QTable,
+        potential_name: str,
+        n_particles: int,
+        n_orbits: Optional[int] = 3,
+        total_time: Optional[float] = None,
+        rng_seed: int = 0,
+        sim_mode: Optional[str] = None,  # optional per-call override
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, QTable]:
+        mode = (sim_mode or self.sim_mode).lower()
+        if mode == "full":
+            # Not yet implemented
+            raise NotImplementedError("Full N-body stream simulation is not yet implemented in pipeline.")
+        return self._simulate_restricted(gc_row, potential_name, n_particles, n_orbits, rng_seed, total_time)
+
+    def _simulate_restricted(
+        self,
+        gc_row: QTable,
+        potential_name: str,
+        n_particles: int,
+        n_orbits: int,
+        rng_seed: int,
+        total_time: Optional[float] = None,  # Added parameter
+        ra: Optional[float] = None,
+        dec: Optional[float] = None,
+        dist: Optional[float] = None,
+        pmra: Optional[float] = None,
+        pmdec: Optional[float] = None,
+        mass: Optional[float] = None,
+        rv: Optional[float] = None,
+        rhm: Optional[float] = None,
+        orbit_t: Optional[float] = None,
+    ):
+        row = gc_row[0]
+
+        # Extract GC info (match your column names) or use defaults
+        ra_q   = ra if ra is not None else row["RA"].value
+        dec_q  = dec if dec is not None else row["DEC"].value
+        dist_q = dist if dist is not None else row["Rsun"].value
+        pmra   = pmra if pmra is not None else row["mualpha"].value
+        pmdec  = pmdec if pmdec is not None else row["mu_delta"].value
+        mass   = mass if mass is not None else row["Mass"].value
+        rv     = rv if rv is not None else row["<RV>"].value
+        rhm    = rhm if rhm is not None else row["rh,m"].value
+        orbit_t = orbit_t if orbit_t is not None else row["orbit_period_max"].value
+        print(f"This GC orbital period is {orbit_t:.2f} Myr")
+
+        # Potentials & initial conditions (your factory)
+        pot_host = self.factory.host(potential_name)
+        pot_sat  = self.factory.satellite_plummer(mass, rhm)
+        prog_w0  = coordinate_utils.get_galactocentric_coords(ra_q, dec_q, dist_q, rv, pmra, pmdec)[0]
+
+        # Determine total time
+        if total_time is not None:
+            time_total = total_time  / 978.0 # Use provided total time directly
+        elif self.total_time is not None:
+            time_total = self.total_time  / 978.0# Use stored total time
+        else:
+            time_total = self._total_time_gyr(orbit_t, n_orbits)  # Calculate from orbit
+
+        # Simulate (your existing helper)
+        time_sat, orbit_sat, xv_stream, ic_stream = create_stream(
+            create_initial_condition_fardal15,
+            np.random.default_rng(rng_seed),
+            time_total, n_particles,
+            pot_host, prog_w0, mass,
+            pot_sat=pot_sat
+        )
+
+        # To observables table (unchanged columns)
+        ra, dec, vlos, pmra_o, pmdec_o, dist = coordinate_utils.get_observed_coords(xv_stream)
+        sim_stream_tab = QTable({
+            "RA":   ra * u.deg,
+            "DEC":  dec * u.deg,
+            "PMRA": pmra_o * u.mas/u.yr,
+            "PMDEC": pmdec_o * u.mas/u.yr,
+            "VLOS": vlos * u.km/u.s,
+            "DIST": dist * u.kpc,
+            "X":  xv_stream[:, 0] * u.kpc,
+            "Y":  xv_stream[:, 1] * u.kpc,
+            "Z":  xv_stream[:, 2] * u.kpc,
+            "Vx": xv_stream[:, 3] * u.km/u.s,
+            "Vy": xv_stream[:, 4] * u.km/u.s,
+            "Vz": xv_stream[:, 5] * u.km/u.s,
+        })
+
+        sim_stream_meta = {
+            "gc_name": row["Cluster"],
+            "potential": potential_name,
+            "n_particles": n_particles,
+            "n_orbits": n_orbits,
+            "rng_seed": rng_seed,
+            "mass_sat": mass,
+            "time_total_gyr": time_total * 978.0,
+        }
+
+        return time_sat, orbit_sat, xv_stream, ic_stream, sim_stream_tab, sim_stream_meta

@@ -7,6 +7,7 @@ import astropy.units as u
 import os
 from scipy.stats import norm
 from matplotlib.colors import Normalize
+from .coordinate_utils import get_observed_coords
 
 def plot_desi_region(
     tiles_path='data/tiles-main.ecsv',
@@ -583,7 +584,8 @@ def plot_sim_stream(
     alpha=0.7,
     pad_frac=0.03,         # 3% padding around data limits
     save_path=None,
-    potential_name=""
+    potential_name="",
+    n_orbit=None
 ):
     """
     Plot only the simulated stream (RA, Dec), optionally marking the globular cluster.
@@ -641,7 +643,6 @@ def plot_sim_stream(
     ax.invert_xaxis()  # sky convention
     ax.set_xlim(ra_max + pad_ra, ra_min - pad_ra)
     ax.set_ylim(dec_min - pad_dec, dec_max + pad_dec)
-    ax.set_title(f"Simulated {gc_name} stream in {potential_name} potential")
 
     plt.tight_layout()
 
@@ -650,4 +651,75 @@ def plot_sim_stream(
         plt.savefig(save_path, dpi=300)
         print(f"[v] saved: {save_path}")
 
+    return ax
+
+def plot_sim_orbit(
+    time_sat,
+    orbit_sat,
+    gc_df=None,
+    gc_name="GC",
+    pad_frac=0.03,
+    save_path=None,
+    potential_name="",
+    n_orbit=None
+):
+    """
+    Plot the simulated orbit (RA, Dec) of the globular cluster.
+
+    Parameters
+    ----------
+    time_sat : array-like
+        Time array for the orbit (e.g., in Gyr).
+    orbit_sat : array-like
+        Orbit positions with shape (N, 3) for galactocentric
+    gc_df : pandas.DataFrame or dict-like, optional
+        If provided, must contain "RA" and "DEC" for the cluster; values can be floats or Quantities.
+    gc_name : str
+        Annotation next to the GC marker.
+    pad_frac : float
+        Fractional padding applied to RA/Dec ranges.
+    save_path : str or None
+        If given, save the figure to this path.
+    """
+    # orbit_sat is in (x, y, z), convert this to (RA, Dec, Distance)
+    ra, dec, dist, _, _, _ = get_observed_coords(orbit_sat)
+
+    # Compute bounds with a touch of padding
+    ra_min, ra_max   = np.nanmin(ra),  np.nanmax(ra)
+    dec_min, dec_max = np.nanmin(dec), np.nanmax(dec)
+    d_ra  = (ra_max - ra_min) if np.isfinite(ra_max - ra_min) else 1.0
+    d_dec = (dec_max - dec_min) if np.isfinite(dec_max - dec_min) else 1.0
+    pad_ra, pad_dec = d_ra*pad_frac, d_dec*pad_frac
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    # Orbit path
+    ax.plot(ra, dec, lw=1.5, color='blue', alpha=0.8, zorder=2, label="Simulated Orbit")
+
+    # Plot DESI
+    plot_desi_region(ax=ax, length_threshold=5, color="black")
+    # Optional GC marker
+    if gc_df is not None:
+        gc_ra = gc_df["RA"][0]; gc_dec = gc_df["DEC"][0]
+        gc_ra_deg  = gc_ra.to_value(u.deg)  if getattr(gc_ra,  "unit", None) else float(gc_ra)
+        gc_dec_deg = gc_dec.to_value(u.deg) if getattr(gc_dec, "unit", None) else float(gc_dec)
+        ax.scatter(gc_ra_deg, gc_dec_deg, s=80, marker='*', facecolor='crimson',
+                   edgecolor='k', linewidths=0.8, zorder=3)
+        ax.annotate(gc_name, (gc_ra_deg, gc_dec_deg),
+                    xytext=(6, 6), textcoords='offset points',
+                    fontsize=9, color='black')
+    # Axes, limits, and cosmetics
+    ax.set_xlabel("RA [deg]")
+    ax.set_ylabel("Dec [deg]")
+    ax.legend(loc='upper right', fontsize=8, frameon=False)
+    ax.invert_xaxis()  # sky convention
+    ax.set_xlim(ra_max + pad_ra, ra_min - pad_ra)
+    ax.set_ylim(dec_min - pad_dec, dec_max + pad_dec)
+    t_total = gc_df["orbit_period_max"][0].value * n_orbit
+    ax.set_title(f"Simulated {gc_name} Orbit for {t_total:.2f} Gyr")
+    plt.tight_layout()
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path, dpi=300)
+        print(f"[v] saved: {save_path}")
     return ax

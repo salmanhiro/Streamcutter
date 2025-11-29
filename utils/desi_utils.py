@@ -15,117 +15,14 @@ import agama
 from utils import mock_stream_utils, coordinate_utils, selection_utils, plot_utils
 
 
-# ---------------------------
-# GC parameters & potentials
-# ---------------------------
+from typing import Tuple, Optional
+import numpy as np
+import astropy.units as u
+from astropy.table import QTable
 
-@dataclass
-class GCParams:
-    """Helper to load the GC parameter table and select a cluster row."""
-    table_path: str = "data/mw_gc_parameters_orbital_structural_time.ecsv"
+# assume these exist in your codebase (same as your original)
+from utils import coordinate_utils, mock_stream_utils
 
-    def get_row(self, cluster_name: str) -> QTable:
-        tab = QTable.read(self.table_path)
-        sel = tab[tab["Cluster"] == cluster_name]
-        if len(sel) == 0:
-            raise ValueError(f"Cluster '{cluster_name}' not found in: {self.table_path}")
-        return sel[0:1]  # keep as 1-row table for convenience
-
-
-class PotentialFactory:
-    """Create host & satellite potentials, and ensure Agama unit setup."""
-    def __init__(self, potentials_dir: str = "potentials"):
-        self.potentials_dir = potentials_dir
-        self._ensure_units()
-
-    @staticmethod
-    def _ensure_units():
-        # Matches your original: code assumes ini files are already in these units
-        agama.setUnits(length=1, velocity=1, mass=1)
-
-    def host(self, potential_name: str) -> agama.GalaPotential:
-        ini = Path(self.potentials_dir) / f"{potential_name}.ini"
-        if not ini.is_file():
-            raise FileNotFoundError(f"Host potential ini not found: {ini}")
-        return agama.GalaPotential(str(ini))
-
-    @staticmethod
-    def satellite_plummer(mass: float, rhm: float) -> agama.GalaPotential:
-        # scaleRadius expects same length units as Agama config (here unitless, consistent with setUnits above)
-        return agama.GalaPotential(type="Plummer", mass=mass, scaleRadius=rhm)
-
-
-# ---------------------------
-# Stream simulation
-# ---------------------------
-
-class StreamSimulator:
-    """Simulate a tidal stream and return both phase-space and observables table."""
-    def __init__(self, factory: PotentialFactory):
-        self.factory = factory
-
-    @staticmethod
-    def _total_time_gyr(orbit_period_max: float, n_orbits: int) -> float:
-        # Keep your original heuristic:
-        return (-n_orbits * orbit_period_max) / 978.0 if orbit_period_max < 1000 else -3.0
-
-    def simulate(
-        self,
-        gc_row: QTable,
-        potential_name: str,
-        n_particles: int,
-        n_orbits: int,
-        rng_seed: int = 0,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, QTable]:
-        row = gc_row[0]
-
-        # Extract GC info (match your column names)
-        ra_q   = row["RA"].value
-        dec_q  = row["DEC"].value
-        dist_q = row["Rsun"].value
-        pmra   = row["mualpha"].value
-        pmdec  = row["mu_delta"].value
-        mass   = row["Mass"].value
-        rv     = row["<RV>"].value
-        rhm    = row["rh,m"].value
-        orbit_t = row["orbit_period_max"].value
-
-        # Potentials & initial conditions
-        pot_host = self.factory.host(potential_name)
-        pot_sat  = self.factory.satellite_plummer(mass, rhm)
-        prog_w0  = coordinate_utils.get_galactocentric_coords(ra_q, dec_q, dist_q, rv, pmra, pmdec)[0]
-
-        # Simulate
-        time_total = self._total_time_gyr(orbit_t, n_orbits)
-        time_sat, orbit_sat, xv_stream, ic_stream = mock_stream_utils.create_stream(
-            mock_stream_utils.create_initial_condition_fardal15,
-            np.random.default_rng(rng_seed),
-            time_total, n_particles,
-            pot_host, prog_w0, mass,
-            pot_sat=pot_sat
-        )
-
-        # To observables table
-        ra, dec, vlos, pmra_o, pmdec_o, dist = coordinate_utils.get_observed_coords(xv_stream)
-        sim_stream_tab = QTable({
-            "RA":   ra * u.deg,
-            "DEC":  dec * u.deg,
-            "PMRA": pmra_o * u.mas/u.yr,
-            "PMDEC": pmdec_o * u.mas/u.yr,
-            "VLOS": vlos * u.km/u.s,
-            "DIST": dist * u.kpc,
-            "X":  xv_stream[:, 0] * u.kpc,
-            "Y":  xv_stream[:, 1] * u.kpc,
-            "Z":  xv_stream[:, 2] * u.kpc,
-            "Vx": xv_stream[:, 3] * u.km/u.s,
-            "Vy": xv_stream[:, 4] * u.km/u.s,
-            "Vz": xv_stream[:, 5] * u.km/u.s,
-        })
-
-        return time_sat, orbit_sat, xv_stream, ic_stream, sim_stream_tab
-
-
-# ---------------------------
 # DESI data IO & selection
 # ---------------------------
 
@@ -144,8 +41,6 @@ class DESIData:
 class DESISelectionResult:
     RV_T_final: Table
     FM_T_final: Table
-    RV_T_around_GC: Table
-    FM_T_around_GC: Table
     mask_boxcut: np.ndarray
     gc_region_mask: np.ndarray
 
@@ -167,22 +62,15 @@ class DESISelector:
         dec_deg: u.Quantity,
         rsun_pc: u.Quantity,
         rt_pc: u.Quantity,
-        around_gc_sep_deg: float = 0.5,
     ) -> DESISelectionResult:
         gc_region_mask = selection_utils.mask_gc_region_DESI(FM_T_pos_sel, ra_deg, dec_deg, rsun_pc, rt_pc)
         outside_gc_mask = ~gc_region_mask
-
-        around_gc_mask = selection_utils.around_gc_region_DESI(FM_T_pos_sel, ra_deg, dec_deg, sep=around_gc_sep_deg * u.deg)
-
-        RV_T_around_GC = RV_T_pos_sel[around_gc_mask]
-        FM_T_around_GC = FM_T_pos_sel[around_gc_mask]
 
         RV_T_final = RV_T_pos_sel[outside_gc_mask]
         FM_T_final = FM_T_pos_sel[outside_gc_mask]
 
         return DESISelectionResult(
             RV_T_final=RV_T_final, FM_T_final=FM_T_final,
-            RV_T_around_GC=RV_T_around_GC, FM_T_around_GC=FM_T_around_GC,
             mask_boxcut=gc_region_mask,  # (kept for reference)
             gc_region_mask=gc_region_mask
         )
@@ -195,9 +83,13 @@ class DESISelector:
 class Plotter:
     """Thin wrappers over your existing plot_utils to keep main clean."""
     @staticmethod
-    def sim_stream(sim_stream_tab: QTable, gc_df: QTable, save_path: str, potential_name: str):
+    def sim_stream(sim_stream_tab: QTable, gc_df: QTable, save_path: str, potential_name: str, n_orbit: Optional[int]):
         plot_utils.plot_sim_stream(sim_stream_tab=sim_stream_tab, gc_df=gc_df,
-                                   save_path=save_path, potential_name=potential_name)
+                                   save_path=save_path, potential_name=potential_name, n_orbit=n_orbit)
+        
+    @staticmethod
+    def sim_orbit(time_sat: np.ndarray, orbit_sat: np.ndarray, gc_df: QTable, save_path: str, potential_name: str, n_orbit: int):
+        plot_utils.plot_sim_orbit(time_sat, orbit_sat, gc_df, save_path=save_path, potential_name=potential_name, n_orbit=n_orbit)
 
     @staticmethod
     def fm_density(FM_T: Table, save_path: str):
