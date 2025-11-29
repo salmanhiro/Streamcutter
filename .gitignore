@@ -8,7 +8,7 @@ pot_compare/*
 simulated_streams/*
 stream_candidates/*
 *.out
-notebooks/* 
+notebooks/*
 # change notebooks later
 
 # Byte-compiled / optimized / DLL files

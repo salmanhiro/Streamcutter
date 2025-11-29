@@ -24,7 +24,7 @@ Main capabilities:
 Run the candidate selection process for a specific globular cluster (GC), in example Palomar 5:
 
 ```
-python select_stream_candidates.py --GC Pal_5
+python simulate_stream.py --GC Pal_5
 ```
 
 Use underscore naming for the GC (e.g., Pal_5, NGC_5466, NGC_5634).
