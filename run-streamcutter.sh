@@ -1,3 +1,4 @@
 #!/bin/bash
 
-python select_stream_candidates_extras.py --gc NGC_2419
+python get_tractor_footprints.py \
+    

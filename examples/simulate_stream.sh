@@ -1,9 +1,10 @@
 #!/bin/bash
 #SBATCH --partition mem
+#SBATCH --nodelist m03 
 #SBATCH --nodes 1
 #SBATCH --ntasks 1
-#SBATCH --cpus-per-task 1
-#SBATCH --mem 196G
+#SBATCH --cpus-per-task 16
+#SBATCH --mem 16GB
 #SBATCH --job-name streamcutter
 #SBATCH --output /data/salmanhiro/streamcutter-%J.log
 #SBATCH --time 10-0
@@ -13,4 +14,4 @@ module load slurm
 module load slurm_limit_threads
 source activate streamcutter
 
-srun python get_tractor_footprint.py --sim-file simulated_streams/simulated_stream_Pal_12.fits --min-stars 100 --concat --outdir /data/salmanhiro/tractor --target-radius 1.0 --env-radius 2.0
+srun python simulate_stream.py --gc NGC_5053 --n-orbits 100

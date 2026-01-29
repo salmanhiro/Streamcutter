@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import agama
 from utils.plot_utils import plot_desi_region
 from matplotlib.lines import Line2D
+from astropy.table import Table
 
 
 from utils import mock_stream_utils, coordinate_utils
@@ -17,12 +18,12 @@ from utils import mock_stream_utils, coordinate_utils
 ALL_POTENTIALS = [
     "BarMWPortail17.ini",
     "MWPotential2014.ini",
-    "BT08",
-    "Cautun20",
-    "SCM_MW",
+    # "BT08.ini",
+    "Cautun20.ini",
+    "SCM_MW.ini",
     "LMCVasiliev24",
-    "DB98",
-    "MWPotential2022"
+    # "DB98.ini",
+    # "MWPotential2022.ini"
 ]
 
 def simulate_stream_for_potential(gc_row, pot_ini_path, n_particles, n_orbits, seed=0):
@@ -104,7 +105,7 @@ def overlay_plot(sim_tables, labels, gc_name, save_path, gc_row=None, show_desi=
     for tab, lab in zip(sim_tables, labels):
         ra  = tab["RA"].to_value(u.deg)
         dec = tab["DEC"].to_value(u.deg)
-        sc = ax.scatter(ra, dec, s=6, alpha=0.2, lw=0, label=lab, zorder=2)  # a tad larger points
+        sc = ax.scatter(ra, dec, s=6, alpha=0.5, lw=0, label=lab, zorder=2)  # a tad larger points
         scatter_handles.append(sc)
 
     plot_desi_region(ax=ax, color="lightgrey")
@@ -117,12 +118,35 @@ def overlay_plot(sim_tables, labels, gc_name, save_path, gc_row=None, show_desi=
     ax.annotate(gc_name, (gc_ra, gc_dec), xytext=(8, 8), textcoords='offset points',
                 fontsize=11, color='k', weight='bold', zorder=6)
 
+    
+
+    pal_5_members = "notebooks/catalog/Pal5_stream_data_pm_rv_feh.fits"
+    # Load TARGET_RA and TARGET_DEC columns from the FITS file
+    data = Table.read(pal_5_members)
+    # filter with only FEH_CORRECTED 
+    data_feh = data[data['FEH_CORRECTED'].mask == False]
+    ra_data = data_feh['ra']
+    dec_data = data_feh['dec']
+    ax.scatter(ra_data, dec_data, s=20, color='red', marker='o', edgecolor='k',
+                label='Pal 5 members', zorder=4)
+    
+    pal5_handle = Line2D(
+            [0], [0],
+            marker='o', linestyle='None',
+            markersize=8,
+            markerfacecolor='red',
+            markeredgecolor='k',
+            label='Pal 5 Stream DESI RV + FE/H'
+        )
+
+        
     # axes cosmetics
     ax.set_xlabel("RA [deg]")
     ax.set_ylabel("Dec [deg]")
     ax.set_title(f"{gc_name}: Simulated stream — potential comparison", fontsize=15, pad=10)
     ax.invert_xaxis()
     ax.grid(True, alpha=0.25)
+            
 
     # limits (include GC point if present)
     all_ra  = np.concatenate([t["RA"].to_value(u.deg)  for t in sim_tables])
@@ -132,8 +156,8 @@ def overlay_plot(sim_tables, labels, gc_name, save_path, gc_row=None, show_desi=
         all_dec = np.concatenate([all_dec, [gc_dec]])
     pad_ra  = 0.03 * (np.nanmax(all_ra)  - np.nanmin(all_ra)  + 1e-6)
     pad_dec = 0.03 * (np.nanmax(all_dec) - np.nanmin(all_dec) + 1e-6)
-    ax.set_xlim(np.nanmax(all_ra) + pad_ra, np.nanmin(all_ra) - pad_ra)
-    ax.set_ylim(np.nanmin(all_dec) - pad_dec, np.nanmax(all_dec) + pad_dec)
+    ax.set_xlim(237,222)
+    ax.set_ylim(-6,6)
 
     # BIG legend swatches
     # build custom legend entries so we can control marker size
@@ -149,6 +173,8 @@ def overlay_plot(sim_tables, labels, gc_name, save_path, gc_row=None, show_desi=
         Line2D([0], [0], marker='*', linestyle='None', markersize=14,
                markerfacecolor='gold', markeredgecolor='k', label='GC position')
     )
+    legend_handles.append(pal5_handle)
+
     ax.legend(handles=legend_handles, loc="upper right", fontsize=10, frameon=False, ncol=1)
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)

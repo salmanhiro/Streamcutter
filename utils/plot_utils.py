@@ -715,8 +715,7 @@ def plot_sim_orbit(
     ax.invert_xaxis()  # sky convention
     ax.set_xlim(ra_max + pad_ra, ra_min - pad_ra)
     ax.set_ylim(dec_min - pad_dec, dec_max + pad_dec)
-    t_total = gc_df["orbit_period_max"][0].value * n_orbit
-    ax.set_title(f"Simulated {gc_name} Orbit for {t_total:.2f} Gyr")
+    ax.set_title(f"Simulated {gc_name} streams")
     plt.tight_layout()
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)

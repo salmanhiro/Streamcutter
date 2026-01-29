@@ -7,11 +7,21 @@ from astropy.table import Table, vstack
 from astropy.io import fits
 import matplotlib.pyplot as plt
 from utils import plot_utils
-import fitsio
-import os
 from tqdm import tqdm
 
 MAX_WORKERS = 10
+
+# keep only columns you actually use (include mask columns!)
+COLS_TO_KEEP = [
+    "ra", "dec",
+    "flux_g", "flux_r", "flux_z",
+    "pmra", "pmdec",
+    "brickid", "type", "ref_id",
+    "mw_transmission_g", "mw_transmission_r", "mw_transmission_z",
+    "parallax",
+    "allmask_g", "allmask_r",
+]
+
 
 from tqdm import tqdm
 import fitsio, os
@@ -55,84 +65,88 @@ def _downcast_all_fields(arr):
     return out
 
 
-def build_from_list(paths, out_fits):
-    try:
-        import fitsio
-        import numpy as np
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        def read_recarray(p):
-            # Prefer TRACTOR ext; else take the largest binary table
-            with fitsio.FITS(p, 'r') as f:
+
+def build_from_list(paths, out_fits):
+    """
+    Read a list of Tractor FITS files, keep only COLS_TO_KEEP, PSF-only,
+    downcast dtypes, and write a single TRACTOR table with fitsio.
+
+    Astropy fallback is disabled here on purpose.
+    """
+    import fitsio
+    import numpy as np
+
+    def read_recarray(p):
+        """Read TRACTOR extension from one file, only COLS_TO_KEEP."""
+        try:
+            with fitsio.FITS(p, "r") as f:
                 idx = None
                 for i, h in enumerate(f):
-                    if h.get_extname().upper() == "TRACTOR" and h.get_exttype() == "BINARY_TBL":
-                        idx = i; break
+                    if (
+                        h.get_exttype() == "BINARY_TBL"
+                        and h.get_extname().upper() == "TRACTOR"
+                    ):
+                        idx = i
+                        break
                 if idx is None:
                     # fallback: pick largest binary table
-                    sizes = [(i, h.get_nrows()) for i,h in enumerate(f) if h.get_exttype()=="BINARY_TBL"]
+                    sizes = [
+                        (i, h.get_nrows())
+                        for i, h in enumerate(f)
+                        if h.get_exttype() == "BINARY_TBL"
+                    ]
                     if not sizes:
                         return None
                     idx = max(sizes, key=lambda x: x[1])[0]
+
                 if f[idx].get_nrows() == 0:
                     return None
-                return f[idx].read()  # numpy structured array (fast)
 
-        recs = []
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-            futs = {ex.submit(read_recarray, p): p for p in paths}
-            for i, fut in enumerate(as_completed(futs), 1):
-                arr = fut.result()
-                if arr is not None and arr.size:
-                    recs.append(arr)
-                if i % 100 == 0 or i == len(futs):
-                    total = sum(a.size for a in recs) if recs else 0
-                    # print(f"[fitsio] {out_fits}: {i}/{len(futs)} read; rows so far: {total}")
+                # read only the columns we actually need
+                return f[idx].read(columns=COLS_TO_KEEP)
+        except Exception as e:
+            print(f"[skip] {p}: {e}")
+            return None
 
-        if not recs:
-            raise RuntimeError("fitsio read returned no rows.")
+    recs = []
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+        futs = {ex.submit(read_recarray, p): p for p in paths}
+        for i, fut in enumerate(as_completed(futs), 1):
+            arr = fut.result()
+            if arr is not None and arr.size:
+                recs.append(arr)
+            if i % 100 == 0 or i == len(futs):
+                total = sum(a.size for a in recs) if recs else 0
+                print(
+                    f"[fitsio] {out_fits}: {i}/{len(futs)} read; "
+                    f"rows so far: {total}"
+                )
 
-        stacked = _filter_psf(stacked)
-        if stacked.size == 0:
-            raise RuntimeError("no PSF rows after reading")
+    if not recs:
+        raise RuntimeError(f"[err] {out_fits}: fitsio read returned no rows.")
 
-        stacked = _downcast_all_fields(stacked)
+    # stack all recarrays
+    stacked = np.concatenate(recs, axis=0)
 
-        with fitsio.FITS(out_fits, 'rw', clobber=True) as f:
-            f.write(stacked, extname="TRACTOR")
-        print(f"[done] wrote {out_fits}  rows={stacked.shape[0]}  (fitsio fast path)")
+    # PSF-only
+    stacked = _filter_psf(stacked)
+    if stacked.size == 0:
+        raise RuntimeError(f"[err] {out_fits}: no PSF rows after reading")
 
-    except Exception as e:
-        print(f"[warn] {out_fits}: fitsio fast path unavailable ({e}). Falling back to Astropy.")
-        from astropy.table import Table, vstack
+    # shrink dtypes, keeping all selected fields
+    stacked = _downcast_all_fields(stacked)
 
-        tables = []
-        for i, p in enumerate(paths, 1):
-            try:
-                try:
-                    t = Table.read(p, hdu="TRACTOR", memmap=True)
-                except Exception:
-                    t = Table.read(p, hdu=1, memmap=True)
-                if len(t):
-                    tables.append(t)
-            except Exception as ee:
-                print(f"[skip] {p}: {ee}")
-            if i % 5 == 0 or i == len(paths):
-                total = sum(len(t) for t in tables)
-                # print(f"[astropy] {out_fits}: {i}/{len(paths)} read; rows so far: {total}")
+    # write out
+    with fitsio.FITS(out_fits, "rw", clobber=True) as f:
+        f.write(stacked, extname="TRACTOR")
 
-        if not tables:
-            raise SystemExit(f"[err] {out_fits}: no rows loaded from any file")
-
-        try:
-            out = vstack(tables, join_type="exact", metadata_conflicts="silent")
-        except Exception:
-            out = vstack(tables, join_type="outer", metadata_conflicts="silent")
-
-        out.write(out_fits, overwrite=True)
-        print(f"[done] wrote {out_fits}  rows={len(out)}  cols={len(out.colnames)}  (Astropy fallback)")
-        return len(out)
-
+    print(
+        f"[done] wrote {out_fits}  rows={stacked.shape[0]}  "
+        f"cols={len(stacked.dtype.names)}  (fitsio, cols-only)"
+    )
+    return stacked.shape[0]
 
 def _read_lookup(csv_path):
     ras, decs, paths = [], [], []

@@ -32,25 +32,18 @@ in the full N-body + DF simulation.
 This script implements both approaches, but the full N-body is run only if
 pyfalcon is available.
 '''
+# From E.Vasiliev
 import os, numpy, agama, scipy.special, scipy.integrate, matplotlib.pyplot as plt
 import pyfalcon
-
-# whether to plot a movie as the simulation progresses (slows it down considerably!)
-# if set to False, plot only the final snapshot
+import astropy.units as u
+from astropy.coordinates import SkyCoord, Galactocentric, ICRS, CartesianRepresentation, CartesianDifferential
 plot = True
+import numpy as np
 
-
-
-# working units: 1 Msun, 1 kpc, 1 km/s
 agama.setUnits(length=1, velocity=1, mass=1)
 
-# parameters of the host galaxy (a spherical NFW halo; one can add stellar disc
-# or even use a standard potential such as McMillan17)
-pot_host_params = dict(type='spheroid', gamma=1, beta=3, scaleradius=15.0, densitynorm=1)
-# choose the density normalization such that the circular velocity at 10 kpc is 200 km/s
-vcirc1 = (-agama.Potential(pot_host_params).force(10,0,0)[0] * 10)**0.5
-pot_host_params['densitynorm'] = (200.0/vcirc1)**2
-pot_host = agama.Potential(pot_host_params)
+pot_host = agama.Potential("potentials/MWPotential2014.ini")  # alternative: a more realistic Milky Way potential
+
 
 # prepare an interpolation table for the host velocity dispersion profile
 df_host = agama.DistributionFunction(type='quasispherical', potential=pot_host)
@@ -61,7 +54,7 @@ logspl  = agama.Spline(numpy.log(grid_r), numpy.log(grid_sig))  # log-scaled spl
 sigma   = lambda r: numpy.exp(logspl(numpy.log(r)))   # and the un-scaled interpolator
 
 # initial potential of the satellite (a single Dehnen component with a Gaussian cutoff)
-pot_sat  = agama.Potential(type='spheroid', gamma=1, beta=4, scaleradius=2.0, outercutoffradius=8.0, mass=1e9)
+pot_sat  = agama.Potential(type='Plummer', scaleRadius=0.05, mass=1e5)
 initmass = pot_sat.totalMass()
 
 # create a spherical isotropic DF for the satellite and sample it with particles
@@ -69,20 +62,20 @@ df_sat = agama.DistributionFunction(type='quasispherical', potential=pot_sat)
 Nbody = 10000
 xv, mass = agama.GalaxyModel(pot_sat, df_sat).sample(Nbody)
 
-# place the satellite at the apocentre of a moderately eccentric orbit
-R0 = 50.0
-Vcirc = (-R0 * pot_host.force(R0,0,0)[0])**0.5
-V0 = 0.7 * Vcirc
+# acquired from orbital simulation
+r_center = numpy.array([
+    9.87557601928711,   11.236837387084961,  5.983392238616943,   # x, y, z   [kpc]
+    -13.987908363342285, -124.69666290283203, 130.86196899414062   # vx, vy, vz [km/s]
+], dtype=float)
 
-# initial displacement
-r_center = numpy.array([R0, 0, 0, 0, V0, 0])
+# shift particle ICs into the Galactocentric frame at Pal 5's current phase-space point
 xv += r_center
 
 # parameters for the simulation
-tend = 3.0   # total simulation time
-tupd = 2**-2 # interval for plotting and updating the satellite mass for the restricted N-body simulation
-tau  = 2**-8 # timestep of the full N-body sim (typically should be smaller than eps/v, where v is characteristic internal velocity)
-eps  = 0.1   # softening length for the full N-body simulation
+tend = 1.0   # total simulation time
+tupd = 2**-3 # interval for plotting and updating the satellite mass for the restricted N-body simulation
+tau  = 2**-9 # timestep of the full N-body sim (typically should be smaller than eps/v, where v is characteristic internal velocity)
+eps  = 0.01  # softening length for the full N-body simulation
 
 def dynfricAccel(pos, vel, mass):
     # compute the Chandrasekhar's dynamical friction acceleration for a point mass in the host galaxy
@@ -102,7 +95,18 @@ def orbitDF(ic, time, timestart, trajsize, mass):
     traj = scipy.integrate.odeint(
         lambda xv, t: numpy.hstack((xv[3:6], pot_host.force(xv[0:3], t=t) + dynfricAccel(xv[0:3], xv[3:6], initmass) )),
         ic, times)
+
+    # traj = scipy.integrate.odeint(
+    #     lambda xv, t: numpy.hstack((xv[3:6], pot_host.force(xv[0:3], t=t))),
+    #     ic, times)
     return times, traj
+
+def orbit_host_agama(ic, time, timestart, trajsize):
+    # Agama orbit integrator in the given potential
+    times, traj = agama.orbit(ic=ic, potential=pot_host, time=time,
+                             timestart=timestart, trajsize=trajsize)
+    return times, traj
+
 
 # simulate the evolution of the disrupting satellite using two methods:
 # "restricted N-body" (r_ prefix) and "full N-body" (if available, f_ prefix)
@@ -135,6 +139,10 @@ while time < tend:
     # first determine the trajectory of the satellite centre in the host potential
     # (assuming that it moves as a single massive particle)
     time_center, orbit_center = orbitDF(ic=r_center, time=tupd, timestart=time, trajsize=round(tupd/tau) + 1, mass=r_mass[-1])
+    
+    #time_center, orbit_center = orbit_host_agama(ic=r_center, time=tupd, timestart=time,
+    #    trajsize=round(tupd/tau) + 1
+    #)
     times_u.append(time_center[-1])
     times_t.extend(time_center[1:])
     r_traj.extend(orbit_center[1:])
@@ -150,7 +158,7 @@ while time < tend:
     r_bound = pot_sat.potential(r_xv[:,0:3] - r_center[0:3]) + 0.5 * numpy.sum((r_xv[:,3:6] - r_center[3:6])**2, axis=1) < 0
     r_mass.append(numpy.sum(mass[r_bound]))
 
-    print("Using pyfalcon for full N-body simulation")
+    # Method 2: full N-body
     if time==0:   # initialize accelerations and potential
         f_acc, f_pot = pyfalcon.gravity(f_xv[:,0:3], agama.G * mass, eps)
         f_acc += pot_host.force(f_xv[:,0:3]) + dynfricAccel(f_center[0:3], f_center[3:6], initmass)
@@ -210,10 +218,10 @@ while time < tend:
             ax2.scatter(f_xv[:,0], f_xv[:,1], marker='o', s=1, linewidths=0, edgecolors='none',
                 c=f_bound, cmap='bwr_r', vmin=0, vmax=1)
             ax2.plot(numpy.vstack(f_traj)[:,0], numpy.vstack(f_traj)[:,1], 'g')
-        ax1.set_xlim(-60,60)
-        ax1.set_ylim(-60,60)
-        ax2.set_xlim(-60,60)
-        ax2.set_ylim(-60,60)
+        ax1.set_xlim(-20,20)
+        ax1.set_ylim(-20,20)
+        ax2.set_xlim(-20,20)
+        ax2.set_ylim(-20,20)
         ax1.set_xlabel('x')
         ax2.set_xlabel('x')
         ax1.set_ylabel('y', labelpad=0)
@@ -223,8 +231,8 @@ while time < tend:
         if pyfalcon:
             bx2.plot(times_t, numpy.sum(numpy.vstack(f_traj)[:,0:2]**2, axis=1)**0.5, 'r')
             cx2.plot(times_t, f_mass, 'b')
-        bx1.set_ylim(0, R0)
-        bx2.set_ylim(0, R0)
+        bx1.set_ylim(0, 20)
+        bx2.set_ylim(0, 20)
         cx1.set_ylim(0, initmass)
         cx2.set_ylim(0, initmass)
         bx1.set_xlim(0, tend)
@@ -237,10 +245,75 @@ while time < tend:
         cx2.set_ylabel('bound mass')
         cx1.yaxis.set_label_position('right')
         cx2.yaxis.set_label_position('right')
-        # save the current figure as a frame in the movie
-        plt.pause(0.01)
+        plt.draw()
+        plt.pause(.01)
 
-if plot:
-    # save to a file
-    plt.ioff()
-    plt.savefig('disrupting_satellite.png', dpi=200)
+plt.savefig('full_nbody.png')
+
+
+def xv_to_icrs(xv, galcen_frame):
+    """
+    xv: (N,6) array in Galactocentric Cartesian:
+        [x,y,z] in kpc, [vx,vy,vz] in km/s
+    returns: SkyCoord in ICRS
+    """
+    xv = np.asarray(xv)
+    if xv.ndim == 1:
+        xv = xv.reshape(1, 6)
+    if xv.shape[1] != 6:
+        raise ValueError(f"xv must be (N,6); got {xv.shape}")
+
+    rep = CartesianRepresentation(
+        x=xv[:,0]*u.kpc, y=xv[:,1]*u.kpc, z=xv[:,2]*u.kpc,
+        differentials=CartesianDifferential(
+            d_x=xv[:,3]*u.km/u.s,
+            d_y=xv[:,4]*u.km/u.s,
+            d_z=xv[:,5]*u.km/u.s
+        )
+    )
+    c_gal = SkyCoord(rep, frame=galcen_frame)
+    return c_gal.icrs
+
+galcen_frame = Galactocentric()
+
+c_r = xv_to_icrs(r_xv, galcen_frame)
+ra_r, dec_r = c_r.ra.deg, c_r.dec.deg
+
+have_full = ("f_xv" in globals()) and (f_xv is not None) and (len(f_xv) == len(r_xv))
+if have_full:
+    c_f = xv_to_icrs(f_xv, galcen_frame)
+    ra_f, dec_f = c_f.ra.deg, c_f.dec.deg
+
+# Convert COM positions too
+c_rcom = xv_to_icrs(r_center, galcen_frame)
+ra_rcom, dec_rcom = c_rcom.ra.deg[0], c_rcom.dec.deg[0]
+
+if have_full:
+    c_fcom = xv_to_icrs(f_center, galcen_frame)
+    ra_fcom, dec_fcom = c_fcom.ra.deg[0], c_fcom.dec.deg[0]
+
+# --- Plot ---
+fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
+axL, axR = axes
+
+# Restricted
+axL.scatter(ra_r, dec_r, s=1, c=r_bound, cmap="bwr_r", vmin=0, vmax=1, linewidths=0)
+axL.scatter([ra_rcom], [dec_rcom], s=80, marker="*", edgecolors="k")  # COM marker
+axL.set_title("Restricted (ICRS)")
+axL.set_xlabel("RA [deg]")
+axL.set_ylabel("Dec [deg]")
+axL.invert_xaxis()
+
+# Full N-body
+if have_full:
+    axR.scatter(ra_f, dec_f, s=1, c=f_bound, cmap="bwr_r", vmin=0, vmax=1, linewidths=0)
+    axR.scatter([ra_fcom], [dec_fcom], s=80, marker="*", edgecolors="k")  # COM marker
+else:
+    axR.text(0.5, 0.5, "Full N-body not available", ha="center", va="center", transform=axR.transAxes)
+
+axR.set_title("Full N-body (ICRS)")
+axR.set_xlabel("RA [deg]")
+axR.invert_xaxis()
+
+fig.tight_layout()
+fig.savefig("icrs_restricted_vs_full_with_com.png", dpi=200)
