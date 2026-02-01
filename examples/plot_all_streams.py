@@ -13,7 +13,11 @@ import matplotlib.pyplot as plt
 from astropy.table import Table
 import astropy.units as u
 from adjustText import adjust_text
-from utils.desi_utils import GCParams
+
+import sys
+sys.path.append('..')
+
+from utils.GC_utils import GCParams
 
 # import your GCParams (adjust the import path to your project if needed)
 
@@ -26,18 +30,14 @@ from utils.plot_utils import plot_desi_region, plot_ls_region
 plt.style.use('desi.mplstyle')
 
 # Directory containing the simulated stream FITS files
-stream_dir = "simulated_streams"
+stream_dir = "../simulated_streams"
 
 # ---------------------------------------------------------------------
 # Load FITS files (include Pal_5FK15, exclude default Pal_5 and VB21)
 # ---------------------------------------------------------------------
 stream_files = sorted([
     f for f in os.listdir(stream_dir)
-    if f.endswith(".fits") and (
-        "Pal_5FK15" in f or (
-            not any(tag in f for tag in ["VB21"]) and "Pal_5" not in f
-        )
-    )
+    if f.endswith(".fits") 
 ])
 
 print(f"[v] Found {len(stream_files)} simulated streams")
@@ -104,8 +104,8 @@ ax.set_xlabel(r"RA [deg]")
 ax.set_ylabel(r"Dec [deg]")
 
 # Plot DESI and LS footprint outlines
-plot_desi_region(ax=ax, length_threshold=5, color="black")
-plot_ls_region(ax=ax, length_threshold=5, color="gray")
+plot_desi_region(ax=ax, length_threshold=5, color="black", tiles_path="../data/tiles-main.ecsv")
+plot_ls_region(ax=ax, length_threshold=5, color="gray", tiles_path="../data/tiles-main.ecsv")
 
 
 # ---------------------------------------------------------------------

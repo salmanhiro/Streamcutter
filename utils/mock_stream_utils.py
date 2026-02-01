@@ -298,6 +298,7 @@ class StreamSimulator:
             "n_orbits": n_orbits,
             "rng_seed": rng_seed,
             "mass_sat": mass,
+            "rhm": rhm,
             "time_total_gyr": time_total * 978.0,
         }
 

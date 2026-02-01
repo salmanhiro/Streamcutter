@@ -1,6 +1,6 @@
 import argparse, os, time
 import astropy.units as u
-from astropy.table import QTable
+from astropy.table import QTable, Table
 
 import sys
 sys.path.append('..')
@@ -24,26 +24,31 @@ def main():
     p.add_argument("--n-orbits", type=int, default=3)
     p.add_argument("--simulate-only", action="store_true")
     p.add_argument("--no-plot", action="store_true")
+    p.add_argument("--mode", choices=['desi', 'all'], default='desi', help="Choose simulation mode: 'desi' or 'all'")
     args = p.parse_args()
 
-    #  Load GC row
-
-    from astropy.table import Table
-
-    gc_name_tab = Table.read("data/gc_names_list_indesi.csv")
+    # Load GC row
+# FILEPATH: /cluster/home/salmanhiro/DESI/Streamcutter/auto_simulate.py
+    
+    # if not desi, plot all
+    gc_name_tab = QTable.read("data/mw_gc_parameters_orbital_structural_time.ecsv")
     gc_names = list(gc_name_tab["Cluster"])
+    if args.mode == 'desi':
+        gc_name_tab = Table.read("data/gc_names_list_indesi.csv")
+        gc_names = list(gc_name_tab["Cluster"])
 
     for gc_name in gc_names:
         
         gc = GCParams().get_row(gc_name)
 
         # First, check GC distance from gc["Rsun"]
-        print(f"[*] Checking GC: {gc_name} at distance {gc['Rsun'].value[0]:.2f} kpc")
-        if gc["Rsun"].value[0] > 31.0:
-            print(f"[!] Skipping {gc_name}: distance {gc['Rsun'].value[0]:.2f} kpc > 31 kpc")
-            continue
+        if args.mode == 'desi':
+            print(f"[*] Checking GC: {gc_name} at distance {gc['Rsun'].value[0]:.2f} kpc")
+            if gc["Rsun"].value[0] > 31.0:
+                print(f"[!] Skipping {gc_name}: distance {gc['Rsun'].value[0]:.2f} kpc > 31 kpc")
+                continue
 
-        print(f"[*] Simulating stream for GC: {gc_name}")
+            print(f"[*] Simulating stream for GC: {gc_name}")
 
         #  Simulate
         factory = PotentialFactory()
@@ -71,6 +76,12 @@ def main():
                             save_path=f"{out_sim_dir}/{gc_name}_simulated_stream.png",
                             potential_name=tag,
                             n_orbit=args.n_orbits)
+            
+
+        # save metadata of stream
+        meta_path = f"{out_sim_dir}/simulated_stream_{gc_name}_meta.ecsv"
+        Exporter.write_metadata(meta_path, sim_stream_meta)
+        print(f"[v] wrote simulated stream metadata to: {meta_path}")
 
 if __name__ == "__main__":
     t0 = time.time()

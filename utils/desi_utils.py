@@ -134,6 +134,14 @@ class Exporter:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         sim_stream_tab.write(path, overwrite=True)
 
+    @staticmethod
+    def write_metadata(path: str, metadata: Dict[str, object]) -> None:
+        from astropy.table import Table
+        meta_items = [(k, str(v)) for k, v in metadata.items()]
+        meta_table = Table(rows=meta_items, names=["key", "value"])
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        meta_table.write(path, overwrite=True)
+
 
 # ---------------------------
 # Sweep brick fetcher (from RA/Dec footprint)
