@@ -7,6 +7,22 @@ name = "streamcutter"
 version = "0.1.0"
 description = "Tools for simulating tidal disruption of globular clusters."
 readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Salman Chen", email = "salmanhiro10@gmail.com" },
+]
+keywords = ["astronomy", "globular clusters", "tidal streams", "n-body", "stellar dynamics"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Astronomy",
+]
 requires-python = ">=3.9"
 dependencies = [
     "astropy",
@@ -16,6 +32,11 @@ dependencies = [
     "python-unsio",
     "agama",
 ]
+
+[project.urls]
+Homepage = "https://github.com/salmanhiro/GC-tidal"
+Repository = "https://github.com/salmanhiro/GC-tidal"
+"Bug Tracker" = "https://github.com/salmanhiro/GC-tidal/issues"
 
 [project.optional-dependencies]
 dev = ["pytest"]

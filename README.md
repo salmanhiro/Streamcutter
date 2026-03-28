@@ -28,6 +28,10 @@ python scripts/basic.py
 # Basic check passed.
 ```
 
+## Publishing to PyPI
+
+See [PUBLISHING.md](PUBLISHING.md) for step-by-step instructions on how to register the package on PyPI with trusted publishing and cut a release.
+
 ## Reference
 
 Vasiliev, E. (2019). AGAMA: action-based galaxy modelling architecture. Monthly Notices of the Royal Astronomical Society, 482(2), 1525-1544.
